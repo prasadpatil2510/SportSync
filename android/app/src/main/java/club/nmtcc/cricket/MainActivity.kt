@@ -29,6 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -225,12 +227,25 @@ private fun CreateTournamentScreen(api: CloudApi, onBack: () -> Unit, onCreated:
 
 @Composable
 private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int, onBack: () -> Unit, onAddTeam: () -> Unit, onTeam: (Team) -> Unit, onNewMatch: () -> Unit, onMatch: (CricketMatch) -> Unit) {
+    val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf("Matches") }; var teams by remember { mutableStateOf(emptyList<Team>()) }; var matches by remember { mutableStateOf(emptyList<CricketMatch>()) }; var loading by remember { mutableStateOf(true) }
-    LaunchedEffect(tournament.id, refresh) { loading = true; val result=runCatching { withContext(Dispatchers.IO) { api.tournamentTeams(tournament.id) to api.tournamentMatches(tournament.id) } }; result.onSuccess { teams=it.first; matches=it.second }; loading = false }
+    var importing by remember { mutableStateOf(false) }; var importMessage by remember { mutableStateOf<String?>(null) }; var localRefresh by remember { mutableIntStateOf(0) }
+    LaunchedEffect(tournament.id, refresh, localRefresh) { loading = true; val result=runCatching { withContext(Dispatchers.IO) { api.tournamentTeams(tournament.id) to api.tournamentMatches(tournament.id) } }; result.onSuccess { teams=it.first; matches=it.second }; loading = false }
     Column(Modifier.fillMaxSize()) {
         AppHeader(tournament.name, onBack = onBack)
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface), horizontalArrangement = Arrangement.SpaceAround) {
             listOf("Matches", "Teams", "Points Table", "Leaderboard").forEach { item -> Column(Modifier.clickable { tab = item }.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(item, fontWeight = if (tab == item) FontWeight.Bold else FontWeight.Normal); if (tab == item) Box(Modifier.padding(top = 10.dp).height(3.dp).width(70.dp).background(AppRed)) } }
+        }
+        Surface(color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                OutlinedButton(onClick = {
+                    importing = true; importMessage = null
+                    scope.launch { runCatching { withContext(Dispatchers.IO) { api.refreshAuctionData(tournament.id) } }
+                        .onSuccess { result -> importMessage = "Auction refreshed: ${result.teamsCreated} new teams, ${result.playersCreated} new players, ${result.membershipsAdded} squad links"; localRefresh++ }
+                        .onFailure { importMessage = it.message ?: "Auction refresh failed" }; importing = false }
+                }, enabled = !importing, modifier = Modifier.fillMaxWidth()) { Text(if (importing) "REFRESHING AUCTION DATA…" else "↻  REFRESH AUCTION DATA") }
+                if (importMessage != null) Text(importMessage!!, color = if (importMessage!!.startsWith("Auction refreshed")) ActionTeal else MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            }
         }
         if (tab == "Matches" && loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         else if (tab == "Matches" && matches.isEmpty()) EmptyState("No matches yet", "Set up teams, playing XI and toss to begin scoring.", "START A MATCH", onNewMatch)
@@ -247,7 +262,7 @@ private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int
 
 @Composable
 private fun TeamCard(team: Team, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), elevation = CardDefaults.cardElevation(2.dp)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(team.name); Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(team.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Text(team.city, color = Muted); if (team.captainName.isNotBlank()) Text("ⓒ ${team.captainName}", color = Muted) }; Text("Members", color = ActionTeal) } }
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), elevation = CardDefaults.cardElevation(2.dp)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { RemoteAvatar(team.name, team.logoUrl); Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(team.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Text(team.city, color = Muted); if (team.captainName.isNotBlank()) Text("ⓒ ${team.captainName}", color = Muted) }; Text("Members", color = ActionTeal) } }
 }
 
 @Composable
@@ -273,7 +288,12 @@ private fun TeamScreen(api: CloudApi, team: Team, refresh: Int, onBack: () -> Un
 
 @Composable
 private fun PlayerCard(player: Player, onRemove: (() -> Unit)? = null) {
-    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(2.dp)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(player.name); Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(player.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { if (player.isAdmin) RoleBadge("Admin"); if (player.isCaptain) RoleBadge("Captain"); if (player.isWicketKeeper) RoleBadge("WK"); RoleBadge(player.role.replace('_',' ')) } }; if (onRemove != null) TextButton(onClick = onRemove) { Text("REMOVE", color = AppRed, fontSize = 12.sp) } else Text("0\nMat", color = Muted) } }
+    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(2.dp)) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) { RemoteAvatar(player.name, player.photoUrl); Spacer(Modifier.width(16.dp)); Column(Modifier.weight(1f)) { Text(player.name, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { if (player.isAdmin) RoleBadge("Admin"); if (player.isCaptain) RoleBadge("Captain"); if (player.isWicketKeeper) RoleBadge("WK"); RoleBadge(player.role.replace('_',' ')) } }; if (onRemove != null) TextButton(onClick = onRemove) { Text("REMOVE", color = AppRed, fontSize = 12.sp) } else Text("0\nMat", color = Muted) } }
+}
+
+@Composable
+private fun RemoteAvatar(label: String, url: String?, size: Int = 64) {
+    if (url.isNullOrBlank()) Avatar(label, size) else AsyncImage(model = url, contentDescription = "$label photo", contentScale = ContentScale.Crop, modifier = Modifier.size(size.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant))
 }
 
 @Composable

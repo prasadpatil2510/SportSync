@@ -1,4 +1,5 @@
 import { isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
+import { absoluteAssetUrl, normalizedName, shortName } from "./integration.js";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -67,6 +68,92 @@ async function finishMatch(env, match, current) {
 
 const clean = value => String(value || "").trim();
 
+async function fetchAuctionJson(env, path) {
+  const base = clean(env.AUCTION_API_BASE_URL).replace(/\/+$/, "");
+  if (!base) throw new Error("Auction integration is not configured");
+  const response = await fetch(`${base}/api/${path}`, { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`Auction ${path} request failed (${response.status})`);
+  return { base, value: await response.json() };
+}
+
+async function refreshAuctionData(env, tournamentId) {
+  const tournament = await env.DB.prepare("SELECT id FROM tournaments WHERE id=?").bind(tournamentId).first();
+  if (!tournament) throw new Error("Tournament not found");
+  const runId = makeId("import");
+  await env.DB.prepare("INSERT INTO import_runs(id,source,tournament_id,status) VALUES(?,'AUCTION',?,'RUNNING')").bind(runId,tournamentId).run();
+  try {
+    const [stateResult, registrationResult] = await Promise.all([
+      fetchAuctionJson(env, "state"), fetchAuctionJson(env, "player-registrations")
+    ]);
+    const state = stateResult.value;
+    const registrations = registrationResult.value;
+    if (!state || !Array.isArray(state.teams) || !Array.isArray(state.players) || !Array.isArray(registrations)) throw new Error("Auction returned malformed data");
+    const base = stateResult.base;
+    const registrationByName = new Map(registrations.map(item => [normalizedName(item.name), item]));
+    const counts = { teamsCreated: 0, teamsUpdated: 0, playersCreated: 0, playersUpdated: 0, membershipsAdded: 0 };
+    const statements = [];
+    const teamIds = new Map();
+    const playerIds = new Map();
+
+    for (const team of state.teams.filter(item => item && item.active !== false)) {
+      const externalId = clean(team.id);
+      if (!externalId || !clean(team.name)) continue;
+      const id = `auction_team_${externalId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      teamIds.set(externalId, id);
+      const exists = await env.DB.prepare("SELECT id FROM teams WHERE external_source='AUCTION' AND external_id=?").bind(externalId).first();
+      exists ? counts.teamsUpdated++ : counts.teamsCreated++;
+      statements.push(env.DB.prepare(`INSERT INTO teams(id,name,short_name,logo_url,captain_name,external_source,external_id,updated_at)
+        VALUES(?,?,?,?,?,'AUCTION',?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,short_name=excluded.short_name,logo_url=excluded.logo_url,captain_name=excluded.captain_name,external_source=excluded.external_source,external_id=excluded.external_id,is_active=1,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id,clean(team.name),shortName(team.name),absoluteAssetUrl(base,team.logoUrl),clean(team.captain),externalId));
+      statements.push(env.DB.prepare("INSERT OR IGNORE INTO tournament_teams(tournament_id,team_id) VALUES(?,?)").bind(tournamentId,id));
+    }
+
+    const profiles = [...registrations];
+    for (const team of state.teams.filter(item => item && item.active !== false && clean(item.captain))) {
+      if (!registrationByName.has(normalizedName(team.captain))) profiles.push({ id: `captain_${team.id}`, name: team.captain, role: "Player", photo: null });
+    }
+    for (const item of state.players) {
+      if (!registrationByName.has(normalizedName(item.name))) profiles.push({ id: `player_${item.id}`, name: item.name, role: item.role, photo: item.photo || item.photoUrl || null });
+    }
+
+    for (const profile of profiles) {
+      const externalId = clean(profile.id);
+      if (!externalId || !clean(profile.name) || playerIds.has(normalizedName(profile.name))) continue;
+      const id = `auction_player_${externalId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+      playerIds.set(normalizedName(profile.name), id);
+      const exists = await env.DB.prepare("SELECT id FROM players WHERE external_source='AUCTION' AND external_id=?").bind(externalId).first();
+      exists ? counts.playersUpdated++ : counts.playersCreated++;
+      statements.push(env.DB.prepare(`INSERT INTO players(id,name,role,photo_url,external_source,external_id,updated_at)
+        VALUES(?,?,?,?, 'AUCTION',?,CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role,photo_url=COALESCE(excluded.photo_url,players.photo_url),external_source=excluded.external_source,external_id=excluded.external_id,is_active=1,updated_at=CURRENT_TIMESTAMP`)
+        .bind(id,clean(profile.name),clean(profile.role)||"PLAYER",absoluteAssetUrl(base,profile.photo || profile.photoUrl),externalId));
+    }
+
+    for (const team of state.teams.filter(item => item && item.active !== false)) {
+      const teamId = teamIds.get(clean(team.id));
+      const memberNames = [clean(team.captain), ...state.players.filter(player => player && player.status === "SOLD" && player.soldTo === team.id).map(player => clean(player.name))].filter(Boolean);
+      for (const name of new Set(memberNames)) {
+        const playerId = playerIds.get(normalizedName(name));
+        if (!teamId || !playerId) continue;
+        const exists = await env.DB.prepare("SELECT 1 found FROM team_players WHERE team_id=? AND player_id=?").bind(teamId,playerId).first();
+        if (!exists) counts.membershipsAdded++;
+        const captain = normalizedName(name) === normalizedName(team.captain);
+        statements.push(env.DB.prepare(`INSERT INTO team_players(team_id,player_id,squad_status,member_role,is_captain)
+          VALUES(?,?,'ACTIVE',?,?) ON CONFLICT(team_id,player_id) DO UPDATE SET squad_status='ACTIVE',member_role=excluded.member_role,is_captain=excluded.is_captain`)
+          .bind(teamId,playerId,captain?"CAPTAIN":"PLAYER",captain?1:0));
+      }
+    }
+    statements.push(env.DB.prepare(`UPDATE import_runs SET status='SUCCESS',teams_created=?,teams_updated=?,players_created=?,players_updated=?,memberships_added=?,completed_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .bind(counts.teamsCreated,counts.teamsUpdated,counts.playersCreated,counts.playersUpdated,counts.membershipsAdded,runId));
+    if (statements.length) await env.DB.batch(statements);
+    return { success: true, importId: runId, ...counts };
+  } catch (error) {
+    await env.DB.prepare("UPDATE import_runs SET status='FAILED',error_text=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(String(error.message || error).slice(0,500),runId).run();
+    throw error;
+  }
+}
+
 async function route(request, env) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -116,6 +203,35 @@ async function route(request, env) {
   if (path === "/api/tournaments" && request.method === "GET") return reply(await list(env, "tournaments"));
   if (path === "/api/teams" && request.method === "GET") return reply(await list(env, "teams"));
   if (path === "/api/players" && request.method === "GET") return reply(await list(env, "players"));
+
+  if (path === "/api/integrations/auction/status" && request.method === "GET") {
+    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    const latest = await env.DB.prepare("SELECT * FROM import_runs WHERE source='AUCTION' ORDER BY started_at DESC LIMIT 1").first();
+    return reply({ configured: Boolean(clean(env.AUCTION_API_BASE_URL)), latest: latest || null });
+  }
+
+  if (path === "/api/integrations/auction/refresh" && request.method === "POST") {
+    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    const input = await body(request);
+    if (!clean(input.tournamentId)) return fail("Tournament is required");
+    return reply(await refreshAuctionData(env, clean(input.tournamentId)));
+  }
+
+  if (path === "/api/public/auction/player-stats" && request.method === "GET") {
+    const requested = clean(url.searchParams.get("externalId"));
+    const where = requested ? "WHERE p.external_source='AUCTION' AND p.external_id=?" : "WHERE p.external_source='AUCTION'";
+    const query = env.DB.prepare(`SELECT p.id,p.external_id externalId,p.name,p.role,p.photo_url photoUrl,
+      (SELECT COUNT(DISTINCT mp.match_id) FROM match_players mp JOIN matches m ON m.id=mp.match_id WHERE mp.player_id=p.id AND m.status='COMPLETE') matches,
+      (SELECT COALESCE(SUM(d.batter_runs),0) FROM deliveries d WHERE d.striker_id=p.id AND d.is_void=0) runs,
+      (SELECT COALESCE(SUM(CASE WHEN d.is_legal=1 THEN 1 ELSE 0 END),0) FROM deliveries d WHERE d.striker_id=p.id AND d.is_void=0) balls,
+      (SELECT COALESCE(SUM(CASE WHEN d.batter_runs=4 THEN 1 ELSE 0 END),0) FROM deliveries d WHERE d.striker_id=p.id AND d.is_void=0) fours,
+      (SELECT COALESCE(SUM(CASE WHEN d.batter_runs=6 THEN 1 ELSE 0 END),0) FROM deliveries d WHERE d.striker_id=p.id AND d.is_void=0) sixes,
+      (SELECT COALESCE(SUM(CASE WHEN d.is_wicket=1 AND COALESCE(d.dismissal_type,'')<>'RUN_OUT' THEN 1 ELSE 0 END),0) FROM deliveries d WHERE d.bowler_id=p.id AND d.is_void=0) wickets
+      FROM players p ${where} ORDER BY p.name`);
+    const result = requested ? await query.bind(requested).all() : await query.all();
+    if (requested && result.results.length === 0) return fail("Player statistics not found",404);
+    return reply({ generatedAt:new Date().toISOString(),players:result.results });
+  }
 
   const tournamentMatchesMatch = path.match(/^\/api\/tournaments\/([^/]+)\/matches$/);
   if (tournamentMatchesMatch && request.method === "GET") {

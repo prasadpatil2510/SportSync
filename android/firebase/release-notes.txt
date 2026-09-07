@@ -1,32 +1,7 @@
-SportSync Cricket — version 0.6.0.
+SportSync Cricket - version 0.7.0.
 
-- Redesigned live scoring display with a prominent score and bowler strip
-- Striker is highlighted in teal; non-striker remains neutral
-- Completing an over now locks scoring until a different bowler is selected
-- Mandatory bowler selection is restored after refresh or app restart
-- Successful scoring updates display a short “Synced” confirmation
-
-Version 0.5 theme improvements remain included:
-
-- Added persistent theme selector to every screen
-- Preserved the existing Classic Red theme
-- Added the new premium Dark Gold theme
-- Added matching SportSync logo variants on organiser login
-- Theme selection is stored on-device and survives restarts
-
-Phase 2 cricket functionality remains included:
-
-- Tournament list and creation
-- Tournament dashboard and team management
-- Squad and player-role management
-- Secure organiser PIN login
-- Cloudflare D1 cloud data
-- Match creation and playing XI selection
-- Toss and opening-player setup
-- Live runs, extras and wicket scoring
-- Undo last ball
-- Innings transition and automatic result
-- Select opening players and detailed dismissal types
-- Recent-ball timeline and live batter/bowler scorecard
-- Automatic multi-device refresh with stale-response protection
-- Player replacement, innings break, pause and resume
+- One-tap, one-way refresh imports auction teams, registered players, photos and sold-team memberships
+- Repeated refreshes update existing profiles without duplicates
+- Imported team logos and player photos appear in SportSync
+- Read-only career statistics feed is ready for auction use
+- Includes the scoring display, mandatory over-end bowler change and API Synced confirmation from 0.6.0

@@ -28,7 +28,7 @@
     },
     "testing": {
       "name": "nmtcc-cricket-api-testing",
-      "vars": { "APP_ENV": "testing" },
+      "vars": { "APP_ENV": "testing", "AUCTION_API_BASE_URL": "https://nmtcc-cricket-auction.prasad-patil-shiva.chatgpt.site" },
       "d1_databases": [
         {
           "binding": "DB",

@@ -35,6 +35,13 @@
       "status": "implemented",
       "path": "specs/features/MATCH-004-scoring-display-and-over-control.md",
       "implementation": ["android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "INT-005",
+      "title": "One-way auction data bridge",
+      "status": "verified",
+      "path": "specs/features/INT-005-auction-data-bridge.md",
+      "implementation": ["worker/src/integration.js", "worker/src/index.js", "worker/migrations/0004_auction_integration.sql", "android/app/src/main/java/club/nmtcc/cricket"]
     }
   ]
 }
