@@ -1,8 +1,10 @@
 package club.nmtcc.cricket
 
 import android.os.Bundle
+import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -33,17 +37,42 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val AppRed = Color(0xFFEC1C2A)
-private val ActionTeal = Color(0xFF159A96)
-private val Page = Color(0xFFF7F7F7)
-private val Ink = Color(0xFF292929)
-private val Muted = Color(0xFF929292)
+private enum class AppTheme { CLASSIC_RED, DARK_GOLD }
+
+private data class BrandPalette(
+    val primary: Color,
+    val action: Color,
+    val page: Color,
+    val surface: Color,
+    val ink: Color,
+    val muted: Color,
+    val isDark: Boolean
+)
+
+private val ClassicPalette = BrandPalette(Color(0xFFEC1C2A), Color(0xFF159A96), Color(0xFFF7F7F7), Color.White, Color(0xFF292929), Color(0xFF929292), false)
+private val GoldPalette = BrandPalette(Color(0xFFB88A2A), Color(0xFFD4AF37), Color(0xFF0D0D0D), Color(0xFF191919), Color(0xFFF5ECD8), Color(0xFFB7A98D), true)
+private val LocalBrandPalette = staticCompositionLocalOf { ClassicPalette }
+private val LocalThemeChoice = staticCompositionLocalOf { AppTheme.CLASSIC_RED to { _: AppTheme -> } }
+
+private val AppRed: Color @Composable get() = LocalBrandPalette.current.primary
+private val ActionTeal: Color @Composable get() = LocalBrandPalette.current.action
+private val Page: Color @Composable get() = LocalBrandPalette.current.page
+private val Ink: Color @Composable get() = LocalBrandPalette.current.ink
+private val Muted: Color @Composable get() = LocalBrandPalette.current.muted
 
 private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, LINEUP, LIVE_LINEUP, TOSS, SCORE }
 
 @Composable
 fun NmtccApp() {
-    MaterialTheme(colorScheme = lightColorScheme(primary = AppRed, secondary = ActionTeal, background = Page, surface = Color.White)) {
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("sportsync-ui", Context.MODE_PRIVATE) }
+    var selectedTheme by remember { mutableStateOf(runCatching { AppTheme.valueOf(preferences.getString("theme", AppTheme.CLASSIC_RED.name)!!) }.getOrDefault(AppTheme.CLASSIC_RED)) }
+    val palette = if (selectedTheme == AppTheme.DARK_GOLD) GoldPalette else ClassicPalette
+    val selectTheme: (AppTheme) -> Unit = { choice -> selectedTheme = choice; preferences.edit().putString("theme", choice.name).apply() }
+    val scheme = if (palette.isDark) darkColorScheme(primary = palette.primary, secondary = palette.action, background = palette.page, surface = palette.surface, onPrimary = Color.Black, onSecondary = Color.Black, onBackground = palette.ink, onSurface = palette.ink)
+    else lightColorScheme(primary = palette.primary, secondary = palette.action, background = palette.page, surface = palette.surface, onPrimary = Color.White, onSecondary = Color.White, onBackground = palette.ink, onSurface = palette.ink)
+    CompositionLocalProvider(LocalBrandPalette provides palette, LocalThemeChoice provides (selectedTheme to selectTheme)) {
+    MaterialTheme(colorScheme = scheme) {
         var organiserPin by remember { mutableStateOf<String?>(null) }
         if (organiserPin == null) {
             OrganiserLoginScreen { organiserPin = it }
@@ -73,6 +102,7 @@ fun NmtccApp() {
             }
         }
     }
+    }
 }
 
 @Composable
@@ -82,9 +112,10 @@ private fun OrganiserLoginScreen(onAuthenticated: (String) -> Unit) {
     var checking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().background(Page)) {
-        AppHeader("NMTCC Cricket", back = false)
+        AppHeader("SportSync Cricket", back = false)
         Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Avatar("NMTCC", 110)
+            val theme = LocalThemeChoice.current.first
+            Image(painter = painterResource(if (theme == AppTheme.DARK_GOLD) R.drawable.sportsync_logo_dark_gold else R.drawable.sportsync_logo_classic), contentDescription = "SportSync", modifier = Modifier.fillMaxWidth().height(105.dp).padding(horizontal = 8.dp))
             Spacer(Modifier.height(22.dp))
             Text("Organiser access", fontSize = 28.sp, fontWeight = FontWeight.Bold)
             Text("Enter your testing PIN to manage tournaments, teams and players.", color = Muted, modifier = Modifier.padding(vertical = 12.dp))
@@ -97,12 +128,20 @@ private fun OrganiserLoginScreen(onAuthenticated: (String) -> Unit) {
 
 @Composable
 private fun AppHeader(title: String, back: Boolean = true, onBack: () -> Unit = {}) {
+    var themeMenu by remember { mutableStateOf(false) }
+    val (theme, selectTheme) = LocalThemeChoice.current
     Surface(color = AppRed, shadowElevation = 3.dp) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             if (back) Text("‹", color = Color.White, fontSize = 48.sp, modifier = Modifier.width(48.dp).clickable { onBack() })
             else Text("☰", color = Color.White, fontSize = 28.sp, modifier = Modifier.width(48.dp))
             Text(title, color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("⌕", color = Color.White, fontSize = 32.sp)
+            Box {
+                Text(if (theme == AppTheme.DARK_GOLD) "◆" else "●", color = if (theme == AppTheme.DARK_GOLD) Color(0xFFFFE28A) else Color.White, fontSize = 24.sp, modifier = Modifier.padding(10.dp).clickable { themeMenu = true })
+                DropdownMenu(expanded = themeMenu, onDismissRequest = { themeMenu = false }) {
+                    DropdownMenuItem(text = { Text("Classic Red") }, leadingIcon = { Text("●", color = Color(0xFFEC1C2A)) }, onClick = { selectTheme(AppTheme.CLASSIC_RED); themeMenu = false })
+                    DropdownMenuItem(text = { Text("Dark Gold") }, leadingIcon = { Text("◆", color = Color(0xFFD4AF37)) }, onClick = { selectTheme(AppTheme.DARK_GOLD); themeMenu = false })
+                }
+            }
         }
     }
 }
@@ -119,8 +158,8 @@ private fun TournamentListScreen(api: CloudApi, refresh: Int, onCreate: () -> Un
         loading = false
     }
     Column(Modifier.fillMaxSize()) {
-        AppHeader("NMTCC Cricket", back = false)
-        Row(Modifier.fillMaxWidth().background(Color.White).padding(14.dp), horizontalArrangement = Arrangement.SpaceAround) {
+        AppHeader("SportSync Cricket", back = false)
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(14.dp), horizontalArrangement = Arrangement.SpaceAround) {
             listOf("Matches", "Tournaments", "Teams", "Stats").forEach { Text(it, color = if (it == "Tournaments") AppRed else Ink, fontWeight = if (it == "Tournaments") FontWeight.Bold else FontWeight.Normal) }
         }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +229,7 @@ private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int
     LaunchedEffect(tournament.id, refresh) { loading = true; val result=runCatching { withContext(Dispatchers.IO) { api.tournamentTeams(tournament.id) to api.tournamentMatches(tournament.id) } }; result.onSuccess { teams=it.first; matches=it.second }; loading = false }
     Column(Modifier.fillMaxSize()) {
         AppHeader(tournament.name, onBack = onBack)
-        Row(Modifier.fillMaxWidth().background(Color.White), horizontalArrangement = Arrangement.SpaceAround) {
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface), horizontalArrangement = Arrangement.SpaceAround) {
             listOf("Matches", "Teams", "Points Table", "Leaderboard").forEach { item -> Column(Modifier.clickable { tab = item }.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(item, fontWeight = if (tab == item) FontWeight.Bold else FontWeight.Normal); if (tab == item) Box(Modifier.padding(top = 10.dp).height(3.dp).width(70.dp).background(AppRed)) } }
         }
         if (tab == "Matches" && loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

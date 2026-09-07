@@ -1,4 +1,12 @@
-NMTCC Cricket Phase 2 complete — version 0.4.0.
+SportSync Cricket — version 0.5.0.
+
+- Added persistent theme selector to every screen
+- Preserved the existing Classic Red theme
+- Added the new premium Dark Gold theme
+- Added matching SportSync logo variants on organiser login
+- Theme selection is stored on-device and survives restarts
+
+Phase 2 cricket functionality remains included:
 
 - Tournament list and creation
 - Tournament dashboard and team management

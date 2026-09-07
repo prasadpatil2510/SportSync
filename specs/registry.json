@@ -21,6 +21,13 @@
       "status": "verified",
       "path": "specs/system/DEV-001-ai-harness.md",
       "implementation": ["AGENTS.md", "scripts", "harness", ".github/workflows/verify.yml"]
+    },
+    {
+      "id": "UI-003",
+      "title": "Selectable SportSync application themes",
+      "status": "implemented",
+      "path": "specs/features/UI-003-selectable-themes.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt", "android/app/src/main/res/drawable-nodpi"]
     }
   ]
 }
