@@ -1,4 +1,12 @@
-SportSync Cricket — version 0.5.0.
+SportSync Cricket — version 0.6.0.
+
+- Redesigned live scoring display with a prominent score and bowler strip
+- Striker is highlighted in teal; non-striker remains neutral
+- Completing an over now locks scoring until a different bowler is selected
+- Mandatory bowler selection is restored after refresh or app restart
+- Successful scoring updates display a short “Synced” confirmation
+
+Version 0.5 theme improvements remain included:
 
 - Added persistent theme selector to every screen
 - Preserved the existing Classic Red theme
