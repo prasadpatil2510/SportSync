@@ -1,8 +1,6 @@
-SportSync Cricket - version 0.9.0.
+SportSync Cricket - version 0.9.1.
 
-- Current-over ball strip clears after every completed over
-- Scoring console is separated from a new read-only live scorecard
-- Live scorecard includes dismissal details and bowling overs, maidens, runs, wickets and economy
-- Dismissal type and involved players use consistent dropdown controls
-- Wide and no-ball entry now supports 1 to 7 extra runs
-- Includes the second-innings and fielding attribution fixes from 0.8.0
+- Restored the original scoreboard directly on the scoring screen
+- Removed separate Live Score navigation
+- Improved action-button spacing for mobile screens
+- Retains current-over balls, dismissal dropdowns, additional fielders and variable wide/no-ball extras

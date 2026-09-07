@@ -62,7 +62,7 @@ private val Page: Color @Composable get() = LocalBrandPalette.current.page
 private val Ink: Color @Composable get() = LocalBrandPalette.current.ink
 private val Muted: Color @Composable get() = LocalBrandPalette.current.muted
 
-private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, LINEUP, LIVE_LINEUP, TOSS, SCORE, LIVE_SCORE }
+private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, LINEUP, LIVE_LINEUP, TOSS, SCORE }
 
 @Composable
 fun NmtccApp() {
@@ -100,8 +100,7 @@ fun NmtccApp() {
                 Screen.LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.TOURNAMENT }, onSaved = { screen = Screen.TOSS })
                 Screen.LIVE_LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE }, onSaved = { screen = Screen.SCORE }, liveEdit = true)
                 Screen.TOSS -> TossScreen(api, cricketMatch!!, onBack = { screen = Screen.LINEUP }, onStarted = { cricketMatch = it; screen = Screen.SCORE })
-                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = Screen.TOURNAMENT }, onUpdated = { cricketMatch = it }, onManageLineup = { screen = Screen.LIVE_LINEUP }, onLiveScore = { screen = Screen.LIVE_SCORE })
-                Screen.LIVE_SCORE -> LiveScoreScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE })
+                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = Screen.TOURNAMENT }, onUpdated = { cricketMatch = it }, onManageLineup = { screen = Screen.LIVE_LINEUP })
             }
         }
     }
@@ -386,7 +385,7 @@ private fun TossScreen(api: CloudApi, match: CricketMatch, onBack:()->Unit, onSt
 @Composable private fun DropdownPlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};val label=players.find{it.id==selected}?.name?:"Select player";Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth(),enabled=players.isNotEmpty()){Text(label,modifier=Modifier.weight(1f));Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){players.forEach{player->DropdownMenuItem(text={Text(player.name)},onClick={open=false;onSelect(player.id)})}}}}}
 
 @Composable
-private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit,onManageLineup:()->Unit,onLiveScore:()->Unit){
+private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit,onManageLineup:()->Unit){
     val scope=rememberCoroutineScope()
     var match by remember{mutableStateOf(initial)};var lineup by remember{mutableStateOf(emptyList<Player>())};var deliveries by remember{mutableStateOf(emptyList<Delivery>())};var scorecard by remember{mutableStateOf(Scorecard(emptyList(),emptyList()))}
     var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)};var generation by remember{mutableIntStateOf(0)};var showBowler by remember{mutableStateOf(false)};var showWicket by remember{mutableStateOf(false)};var extraTypeDialog by remember{mutableStateOf<String?>(null)}
@@ -410,13 +409,13 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
             match.status=="COMPLETE"->EmptyState("Match complete",match.result,"BACK TO TOURNAMENT",onBack)
             match.status=="INNINGS_BREAK"->InningsBreakPanel(match,lineup,busy,error){s,n,b->perform{api.endInnings(match.id,s,n,b)}}
             else->LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(0.dp)){
-                item{Surface(color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Scoring console",fontSize=22.sp,fontWeight=FontWeight.Bold);Text("${inn.strikerName} batting · ${inn.bowlerName} bowling",color=Muted)}}}}
+                item{ScoringHero(battingName,inn,oversText,match.overs,target,scorecard)}
                 item{BowlerStrip(inn,scorecard,currentOverBalls){showBowler=true}}
                 item{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
-                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={perform{api.setMatchStatus(match.id,if(match.status=="PAUSED")"LIVE" else "PAUSED")}}){Text(if(match.status=="PAUSED")"RESUME" else "PAUSE")};OutlinedButton(onClick=onLiveScore){Text("LIVE SCORE")};OutlinedButton(onClick=onManageLineup){Text("PLAYERS")}}
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(onClick={perform{api.setMatchStatus(match.id,if(match.status=="PAUSED")"LIVE" else "PAUSED")}},modifier=Modifier.weight(1f)){Text(if(match.status=="PAUSED")"RESUME" else "PAUSE")};OutlinedButton(onClick=onManageLineup,modifier=Modifier.weight(1f)){Text("REPLACE PLAYER")}}
                     Text("Runs",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){(0..6).forEach{r->ScoreButton(r.toString(),locked){recordDelivery(DeliveryDraft(batterRuns=r))}}}
                     Text("Extras & wicket",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){ScoreButton("WD+",locked){extraTypeDialog="WIDE"};ScoreButton("NB+",locked){extraTypeDialog="NO_BALL"};ScoreButton("B",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="BYE"))};ScoreButton("LB",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="LEG_BYE"))};ScoreButton("W",locked){dismissedId=inn.strikerId;nextBatterId=battingPlayers.firstOrNull{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)}?.id?:"";showWicket=true}}
-                    Text("This over",fontWeight=FontWeight.Bold);if(currentOverBalls.isEmpty())Text("New over — no balls yet",color=Muted)else Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){currentOverBalls.forEach{BallBadge(it)}}
+                    ScorecardPanel(scorecard)
                     if(error!=null)Text(error!!,color=MaterialTheme.colorScheme.error)
                     Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(onClick={perform{api.undoDelivery(inn.id)}},enabled=!locked,modifier=Modifier.weight(1f)){Text("UNDO BALL")};Button(onClick={perform{api.endInnings(match.id)}},enabled=!locked,colors=ButtonDefaults.buttonColors(containerColor=AppRed),modifier=Modifier.weight(1f)){Text(if(match.currentInnings==1)"END INNINGS" else "END MATCH")}}
                 }}

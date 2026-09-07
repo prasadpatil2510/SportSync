@@ -56,6 +56,13 @@
       "status": "verified",
       "path": "specs/features/MATCH-007-scoring-console-and-live-scorecard.md",
       "implementation": ["worker/src/index.js", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "MATCH-008",
+      "title": "Integrated scoreboard layout",
+      "status": "verified",
+      "path": "specs/features/MATCH-008-integrated-scoreboard-layout.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
     }
   ]
 }
