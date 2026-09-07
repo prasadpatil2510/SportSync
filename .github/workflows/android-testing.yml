@@ -1,0 +1,58 @@
+name: Android testing build
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: Notes shown to testers
+        required: false
+        default: NMTCC Cricket testing update
+
+jobs:
+  build-and-distribute:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Build testing APK
+        working-directory: android
+        run: gradle assembleStagingDebug --stacktrace
+
+      - name: Save APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nmtcc-cricket-testing
+          path: android/app/build/outputs/apk/staging/debug/*.apk
+          if-no-files-found: error
+
+      - name: Prepare Firebase credentials
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT_JSON != '' }}
+        shell: bash
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/firebase-service-account.json"
+
+      - name: Distribute to Firebase testers
+        if: ${{ env.FIREBASE_SERVICE_ACCOUNT_JSON != '' }}
+        working-directory: android
+        env:
+          FIREBASE_ANDROID_APP_ID: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          FIREBASE_TESTERS: ${{ secrets.FIREBASE_TESTERS }}
+          FIREBASE_SERVICE_CREDENTIALS: ${{ runner.temp }}/firebase-service-account.json
+        run: gradle appDistributionUploadStagingDebug --release-notes="${{ inputs.release_notes }}"

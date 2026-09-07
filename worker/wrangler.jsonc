@@ -1,0 +1,54 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nmtcc-cricket-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-30",
+  "observability": { "enabled": true },
+  "vars": { "APP_ENV": "development" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nmtcc-cricket-development",
+      "database_id": "REPLACE_DEVELOPMENT_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "env": {
+    "development": {
+      "name": "nmtcc-cricket-api-development",
+      "vars": { "APP_ENV": "development" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "nmtcc-cricket-development",
+          "database_id": "REPLACE_DEVELOPMENT_DATABASE_ID",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "testing": {
+      "name": "nmtcc-cricket-api-testing",
+      "vars": { "APP_ENV": "testing" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "nmtcc-cricket-testing",
+          "database_id": "a67040bf-b902-42de-8e55-69adc9e47fb8",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "production": {
+      "name": "nmtcc-cricket-api-production",
+      "vars": { "APP_ENV": "production" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "nmtcc-cricket-production",
+          "database_id": "REPLACE_PRODUCTION_DATABASE_ID",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}

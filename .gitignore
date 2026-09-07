@@ -1,0 +1,32 @@
+# Android and Gradle output
+android/.gradle/
+android/**/build/
+android/local.properties
+*.apk
+*.aab
+
+# Credentials and signing material
+*.jks
+*.keystore
+google-services.json
+firebase-service-account*.json
+android/firebase/testers.txt
+.env
+.env.*
+
+# Worker output
+worker/node_modules/
+worker/.wrangler/
+.wrangler-config/
+worker/.dev.vars
+worker/.dev.vars.*
+worker/wrangler.local.jsonc
+
+# Local reports and operating-system files
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+*.iml

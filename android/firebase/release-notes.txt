@@ -1,0 +1,16 @@
+NMTCC Cricket Phase 2 complete — version 0.4.0.
+
+- Tournament list and creation
+- Tournament dashboard and team management
+- Squad and player-role management
+- Secure organiser PIN login
+- Cloudflare D1 cloud data
+- Match creation and playing XI selection
+- Toss and opening-player setup
+- Live runs, extras and wicket scoring
+- Undo last ball
+- Innings transition and automatic result
+- Select opening players and detailed dismissal types
+- Recent-ball timeline and live batter/bowler scorecard
+- Automatic multi-device refresh with stale-response protection
+- Player replacement, innings break, pause and resume

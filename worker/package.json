@@ -1,0 +1,15 @@
+{
+  "name": "nmtcc-cricket-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env development",
+    "deploy:test": "wrangler deploy --env testing",
+    "deploy:prod": "wrangler deploy --env production",
+    "check": "wrangler deploy --dry-run --env development"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
