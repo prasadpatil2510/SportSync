@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "specs": [
+    {
+      "id": "SYS-001",
+      "title": "Cloud-first tournament foundation",
+      "status": "verified",
+      "path": "specs/system/SYS-001-cloud-foundation.md",
+      "implementation": ["android/app/src/main", "worker/src/index.js", "worker/migrations"]
+    },
+    {
+      "id": "MATCH-002",
+      "title": "Match setup and live scoring",
+      "status": "verified",
+      "path": "specs/features/MATCH-002-live-scoring.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket", "worker/src", "worker/test", "worker/migrations/0003_matches_and_scoring.sql"]
+    },
+    {
+      "id": "DEV-001",
+      "title": "AI implementation harness",
+      "status": "verified",
+      "path": "specs/system/DEV-001-ai-harness.md",
+      "implementation": ["AGENTS.md", "scripts", "harness", ".github/workflows/verify.yml"]
+    }
+  ]
+}

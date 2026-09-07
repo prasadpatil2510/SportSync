@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "quick": [
+    "node scripts/verify-specs.mjs",
+    "node scripts/secret-scan.mjs",
+    "pnpm --dir worker test",
+    "pnpm --dir worker run check"
+  ],
+  "release": [
+    "quick",
+    "gradle --project-dir android assembleStagingDebug"
+  ],
+  "requiredEvidence": [
+    "specification",
+    "acceptance-criteria",
+    "automated-tests",
+    "worker-validation",
+    "android-build"
+  ]
+}

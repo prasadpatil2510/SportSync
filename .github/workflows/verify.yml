@@ -9,6 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  specification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate specification registry
+        run: node scripts/verify-specs.mjs
+      - name: Scan tracked files for secrets
+        run: node scripts/secret-scan.mjs
+
   android:
     runs-on: ubuntu-latest
     steps:
@@ -40,4 +52,5 @@ jobs:
           cache: pnpm
           cache-dependency-path: worker/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test
       - run: pnpm run check

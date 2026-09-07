@@ -1,3 +1,5 @@
+import { isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
+
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
   "access-control-allow-origin": "*",
@@ -55,9 +57,7 @@ async function finishMatch(env, match, current) {
   const first = await env.DB.prepare("SELECT * FROM innings WHERE match_id=? AND innings_number=1").bind(match.id).first();
   const battingName = await env.DB.prepare("SELECT name FROM teams WHERE id=?").bind(current.batting_team_id).first();
   const bowlingName = await env.DB.prepare("SELECT name FROM teams WHERE id=?").bind(current.bowling_team_id).first();
-  let result = "Match tied";
-  if (current.runs > first.runs) result = `${battingName.name} won by ${Math.max(0,10-current.wickets)} wickets`;
-  else if (current.runs < first.runs) result = `${bowlingName.name} won by ${first.runs-current.runs} runs`;
+  const result = matchResult({ firstRuns: Number(first.runs), secondRuns: Number(current.runs), secondWickets: Number(current.wickets), battingTeamName: battingName.name, bowlingTeamName: bowlingName.name });
   await env.DB.batch([
     env.DB.prepare("UPDATE innings SET status='COMPLETE',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(current.id),
     env.DB.prepare("UPDATE matches SET status='COMPLETE',result_text=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(result,match.id)
@@ -216,14 +216,14 @@ async function route(request, env) {
     const batterRuns = Math.max(0, Number(input.batterRuns)||0);
     const extraRuns = Math.max(0, Number(input.extraRuns)||0);
     const extraType = input.extraType || "NONE";
-    const legal = !["WIDE","NO_BALL"].includes(extraType);
+    const legal = isLegalDelivery(extraType);
     const seq = await env.DB.prepare("SELECT COALESCE(MAX(sequence_number),0)+1 next FROM deliveries WHERE innings_id=?").bind(innings.id).first();
     const id = makeId("ball");
     await env.DB.prepare(`INSERT INTO deliveries(id,innings_id,sequence_number,striker_id,non_striker_id,bowler_id,batter_runs,extra_runs,extra_type,is_wicket,dismissal_type,dismissed_player_id,is_legal,note)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,innings.id,seq.next,innings.striker_id,innings.non_striker_id,innings.bowler_id,batterRuns,extraRuns,extraType,input.isWicket?1:0,input.dismissalType||null,input.dismissedPlayerId||null,legal?1:0,clean(input.note)).run();
     const totals = await recalculateInnings(env, innings.id);
     let striker = innings.striker_id, nonStriker = innings.non_striker_id;
-    const runningRuns = batterRuns + (["BYE","LEG_BYE"].includes(extraType) ? extraRuns : (extraType === "NO_BALL" ? Math.max(0, extraRuns - 1) : 0));
+    const runningRuns = strikeRunningRuns(batterRuns, extraRuns, extraType);
     if (runningRuns % 2 === 1) [striker, nonStriker] = [nonStriker, striker];
     if (input.isWicket && input.nextBatterId) {
       if (input.dismissedPlayerId === innings.non_striker_id) nonStriker = input.nextBatterId;
