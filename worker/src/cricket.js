@@ -15,3 +15,9 @@ export function matchResult({ firstRuns, secondRuns, secondWickets, battingTeamN
   if (secondRuns < firstRuns) return `${bowlingTeamName} won by ${firstRuns - secondRuns} runs`;
   return "Match tied";
 }
+
+export function fieldersRequired(dismissalType) {
+  if (dismissalType === "CAUGHT") return { primary: true, assistant: false };
+  if (dismissalType === "RUN_OUT") return { primary: true, assistant: true };
+  return { primary: false, assistant: false };
+}

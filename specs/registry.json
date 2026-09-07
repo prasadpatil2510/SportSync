@@ -42,6 +42,13 @@
       "status": "verified",
       "path": "specs/features/INT-005-auction-data-bridge.md",
       "implementation": ["worker/src/integration.js", "worker/src/index.js", "worker/migrations/0004_auction_integration.sql", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "MATCH-006",
+      "title": "Reliable innings transition and fielding dismissals",
+      "status": "verified",
+      "path": "specs/features/MATCH-006-innings-transition-and-fielding-dismissals.md",
+      "implementation": ["worker/src/index.js", "worker/src/cricket.js", "worker/migrations/0005_fielding_dismissals.sql", "android/app/src/main/java/club/nmtcc/cricket"]
     }
   ]
 }

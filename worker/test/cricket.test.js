@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isLegalDelivery, matchResult, strikeRunningRuns } from "../src/cricket.js";
+import { fieldersRequired, isLegalDelivery, matchResult, strikeRunningRuns } from "../src/cricket.js";
 
 test("wide and no-ball do not consume a legal delivery", () => {
   assert.equal(isLegalDelivery("WIDE"), false);
@@ -28,4 +28,10 @@ test("result covers chase, defence and tie", () => {
   assert.equal(matchResult({ firstRuns: 50, secondRuns: 51, secondWickets: 4, battingTeamName: "Blue", bowlingTeamName: "Red" }), "Blue won by 6 wickets");
   assert.equal(matchResult({ firstRuns: 50, secondRuns: 47, secondWickets: 9, battingTeamName: "Blue", bowlingTeamName: "Red" }), "Red won by 3 runs");
   assert.equal(matchResult({ firstRuns: 50, secondRuns: 50, secondWickets: 8, battingTeamName: "Blue", bowlingTeamName: "Red" }), "Match tied");
+});
+
+test("caught and run-out dismissals require fielding attribution", () => {
+  assert.deepEqual(fieldersRequired("CAUGHT"), { primary: true, assistant: false });
+  assert.deepEqual(fieldersRequired("RUN_OUT"), { primary: true, assistant: true });
+  assert.deepEqual(fieldersRequired("BOWLED"), { primary: false, assistant: false });
 });

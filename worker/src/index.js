@@ -1,4 +1,4 @@
-import { isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
+import { fieldersRequired, isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
 import { absoluteAssetUrl, normalizedName, shortName } from "./integration.js";
 
 const jsonHeaders = {
@@ -318,9 +318,11 @@ async function route(request, env) {
 
   const deliveryMatch = path.match(/^\/api\/innings\/([^/]+)\/deliveries$/);
   if (deliveryMatch && request.method === "GET") {
-    const result = await env.DB.prepare(`SELECT d.*,s.name striker_name,b.name bowler_name,x.name dismissed_player_name
+    const result = await env.DB.prepare(`SELECT d.*,s.name striker_name,b.name bowler_name,x.name dismissed_player_name,
+      f.name fielder_name,af.name assistant_fielder_name
       FROM deliveries d LEFT JOIN players s ON s.id=d.striker_id LEFT JOIN players b ON b.id=d.bowler_id
-      LEFT JOIN players x ON x.id=d.dismissed_player_id WHERE d.innings_id=? AND d.is_void=0 ORDER BY d.sequence_number DESC LIMIT 30`).bind(deliveryMatch[1]).all();
+      LEFT JOIN players x ON x.id=d.dismissed_player_id LEFT JOIN players f ON f.id=d.fielder_id
+      LEFT JOIN players af ON af.id=d.assistant_fielder_id WHERE d.innings_id=? AND d.is_void=0 ORDER BY d.sequence_number DESC LIMIT 30`).bind(deliveryMatch[1]).all();
     return reply(result.results);
   }
   if (deliveryMatch && request.method === "POST") {
@@ -333,10 +335,19 @@ async function route(request, env) {
     const extraRuns = Math.max(0, Number(input.extraRuns)||0);
     const extraType = input.extraType || "NONE";
     const legal = isLegalDelivery(extraType);
+    const fielding = fieldersRequired(input.dismissalType);
+    if (input.isWicket && fielding.primary && !clean(input.fielderId)) return fail(`${input.dismissalType === "CAUGHT" ? "Catcher" : "Primary fielder"} is required`);
+    if (clean(input.fielderId) || clean(input.assistantFielderId)) {
+      const validFielders = await env.DB.prepare("SELECT player_id FROM match_players WHERE match_id=? AND team_id=? AND is_playing=1").bind(innings.match_id,innings.bowling_team_id).all();
+      const ids = new Set(validFielders.results.map(row => row.player_id));
+      if (clean(input.fielderId) && !ids.has(input.fielderId)) return fail("Selected fielder is not in the bowling playing XI");
+      if (clean(input.assistantFielderId) && !ids.has(input.assistantFielderId)) return fail("Selected assisting fielder is not in the bowling playing XI");
+      if (input.fielderId === input.assistantFielderId) return fail("Select different primary and assisting fielders");
+    }
     const seq = await env.DB.prepare("SELECT COALESCE(MAX(sequence_number),0)+1 next FROM deliveries WHERE innings_id=?").bind(innings.id).first();
     const id = makeId("ball");
-    await env.DB.prepare(`INSERT INTO deliveries(id,innings_id,sequence_number,striker_id,non_striker_id,bowler_id,batter_runs,extra_runs,extra_type,is_wicket,dismissal_type,dismissed_player_id,is_legal,note)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,innings.id,seq.next,innings.striker_id,innings.non_striker_id,innings.bowler_id,batterRuns,extraRuns,extraType,input.isWicket?1:0,input.dismissalType||null,input.dismissedPlayerId||null,legal?1:0,clean(input.note)).run();
+    await env.DB.prepare(`INSERT INTO deliveries(id,innings_id,sequence_number,striker_id,non_striker_id,bowler_id,batter_runs,extra_runs,extra_type,is_wicket,dismissal_type,dismissed_player_id,is_legal,note,fielder_id,assistant_fielder_id)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(id,innings.id,seq.next,innings.striker_id,innings.non_striker_id,innings.bowler_id,batterRuns,extraRuns,extraType,input.isWicket?1:0,input.dismissalType||null,input.dismissedPlayerId||null,legal?1:0,clean(input.note),clean(input.fielderId)||null,clean(input.assistantFielderId)||null).run();
     const totals = await recalculateInnings(env, innings.id);
     let striker = innings.striker_id, nonStriker = innings.non_striker_id;
     const runningRuns = strikeRunningRuns(batterRuns, extraRuns, extraType);
@@ -401,10 +412,19 @@ async function route(request, env) {
     if (!match || !["LIVE","INNINGS_BREAK"].includes(match.status)) return fail("Live match not found", 404);
     const current = await env.DB.prepare("SELECT * FROM innings WHERE match_id=? AND innings_number=?").bind(match.id,match.current_innings).first();
     if (match.current_innings === 1) {
+      const hasOpeners = clean(input.strikerId) && clean(input.nonStrikerId) && clean(input.bowlerId);
+      if (match.status !== "INNINGS_BREAK" && !hasOpeners) {
+        await env.DB.batch([
+          env.DB.prepare("UPDATE innings SET status='COMPLETE',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(current.id),
+          env.DB.prepare("UPDATE matches SET status='INNINGS_BREAK',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(match.id)
+        ]);
+        return reply(await matchView(env,match.id));
+      }
+      if (!hasOpeners) return fail("Select two opening batters and an opening bowler");
       const id = makeId("innings");
       await env.DB.batch([
         env.DB.prepare("UPDATE innings SET status='COMPLETE',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(current.id),
-        env.DB.prepare("UPDATE matches SET current_innings=2,batting_team_id=?,bowling_team_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(current.bowling_team_id,current.batting_team_id,match.id),
+        env.DB.prepare("UPDATE matches SET current_innings=2,batting_team_id=?,bowling_team_id=?,status='LIVE',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(current.bowling_team_id,current.batting_team_id,match.id),
         env.DB.prepare(`INSERT INTO innings(id,match_id,innings_number,batting_team_id,bowling_team_id,striker_id,non_striker_id,bowler_id) VALUES(?,?,2,?,?,?,?,?)`).bind(id,match.id,current.bowling_team_id,current.batting_team_id,input.strikerId,input.nonStrikerId,input.bowlerId)
       ]);
     } else {

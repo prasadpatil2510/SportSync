@@ -1,7 +1,8 @@
-SportSync Cricket - version 0.7.0.
+SportSync Cricket - version 0.8.0.
 
-- One-tap, one-way refresh imports auction teams, registered players, photos and sold-team memberships
-- Repeated refreshes update existing profiles without duplicates
-- Imported team logos and player photos appear in SportSync
-- Read-only career statistics feed is ready for auction use
-- Includes the scoring display, mandatory over-end bowler change and API Synced confirmation from 0.6.0
+- Ending the first innings now immediately opens the chase setup screen
+- Starting the chase restores LIVE status and enables second-innings scoring
+- Caught wickets require selecting the catcher
+- Run-outs require a primary fielder and allow an optional assisting fielder
+- Fielding involvement remains stored after refresh
+- Includes auction team/player/photo refresh from 0.7.0
