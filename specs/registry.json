@@ -63,6 +63,13 @@
       "status": "verified",
       "path": "specs/features/MATCH-008-integrated-scoreboard-layout.md",
       "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
+    },
+    {
+      "id": "UI-009",
+      "title": "Scoreboard bat icons and chronological ball badges",
+      "status": "verified",
+      "path": "specs/features/UI-009-scoreboard-icons-and-ball-order.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
     }
   ]
 }

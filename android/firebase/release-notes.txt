@@ -1,6 +1,6 @@
-SportSync Cricket - version 0.9.1.
+SportSync Cricket - version 0.9.2.
 
-- Restored the original scoreboard directly on the scoring screen
-- Removed separate Live Score navigation
-- Improved action-button spacing for mobile screens
-- Retains current-over balls, dismissal dropdowns, additional fielders and variable wide/no-ball extras
+- Added cricket-bat icons for striker and non-striker
+- Current-over delivery results now use consistent circular badges
+- Balls are ordered chronologically from first to latest
+- Overs with wides or no-balls scroll horizontally without hiding deliveries
