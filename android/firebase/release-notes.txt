@@ -1,8 +1,8 @@
-SportSync Cricket - version 0.8.0.
+SportSync Cricket - version 0.9.0.
 
-- Ending the first innings now immediately opens the chase setup screen
-- Starting the chase restores LIVE status and enables second-innings scoring
-- Caught wickets require selecting the catcher
-- Run-outs require a primary fielder and allow an optional assisting fielder
-- Fielding involvement remains stored after refresh
-- Includes auction team/player/photo refresh from 0.7.0
+- Current-over ball strip clears after every completed over
+- Scoring console is separated from a new read-only live scorecard
+- Live scorecard includes dismissal details and bowling overs, maidens, runs, wickets and economy
+- Dismissal type and involved players use consistent dropdown controls
+- Wide and no-ball entry now supports 1 to 7 extra runs
+- Includes the second-innings and fielding attribution fixes from 0.8.0

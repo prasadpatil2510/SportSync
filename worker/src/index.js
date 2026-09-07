@@ -383,12 +383,28 @@ async function route(request, env) {
       COALESCE(SUM(CASE WHEN d.is_legal=1 THEN 1 ELSE 0 END),0) balls,
       COALESCE(SUM(CASE WHEN d.batter_runs=4 THEN 1 ELSE 0 END),0) fours,
       COALESCE(SUM(CASE WHEN d.batter_runs=6 THEN 1 ELSE 0 END),0) sixes,
-      MAX(CASE WHEN d.is_wicket=1 AND d.dismissed_player_id=p.id THEN d.dismissal_type END) dismissal
-      FROM deliveries d JOIN players p ON p.id=d.striker_id WHERE d.innings_id=? AND d.is_void=0 GROUP BY p.id,p.name ORDER BY MIN(d.sequence_number)`).bind(scorecardMatch[1]).all();
-    const bowlers = await env.DB.prepare(`SELECT p.id,p.name,COALESCE(SUM(d.is_legal),0) legal_balls,
-      COALESCE(SUM(d.batter_runs+CASE WHEN d.extra_type IN ('WIDE','NO_BALL') THEN d.extra_runs ELSE 0 END),0) runs,
-      COALESCE(SUM(CASE WHEN d.is_wicket=1 AND COALESCE(d.dismissal_type,'')<>'RUN_OUT' THEN 1 ELSE 0 END),0) wickets
-      FROM deliveries d JOIN players p ON p.id=d.bowler_id WHERE d.innings_id=? AND d.is_void=0 GROUP BY p.id,p.name ORDER BY MIN(d.sequence_number)`).bind(scorecardMatch[1]).all();
+      MAX(CASE WHEN d.is_wicket=1 AND d.dismissed_player_id=p.id THEN d.dismissal_type END) dismissal,
+      MAX(CASE WHEN d.is_wicket=1 AND d.dismissed_player_id=p.id THEN f.name END) fielder_name,
+      MAX(CASE WHEN d.is_wicket=1 AND d.dismissed_player_id=p.id THEN af.name END) assistant_fielder_name,
+      MAX(CASE WHEN d.is_wicket=1 AND d.dismissed_player_id=p.id THEN bw.name END) dismissal_bowler_name
+      FROM deliveries d JOIN players p ON p.id=d.striker_id LEFT JOIN players f ON f.id=d.fielder_id
+      LEFT JOIN players af ON af.id=d.assistant_fielder_id LEFT JOIN players bw ON bw.id=d.bowler_id
+      WHERE d.innings_id=? AND d.is_void=0 GROUP BY p.id,p.name ORDER BY MIN(d.sequence_number)`).bind(scorecardMatch[1]).all();
+    const bowlers = await env.DB.prepare(`WITH ordered AS (
+        SELECT d.*,CAST((SUM(d.is_legal) OVER (ORDER BY d.sequence_number ROWS UNBOUNDED PRECEDING)-d.is_legal)/6 AS INTEGER) over_index,
+          d.batter_runs+CASE WHEN d.extra_type IN ('WIDE','NO_BALL') THEN d.extra_runs ELSE 0 END conceded
+        FROM deliveries d WHERE d.innings_id=? AND d.is_void=0
+      ), figures AS (
+        SELECT bowler_id,COALESCE(SUM(is_legal),0) legal_balls,COALESCE(SUM(conceded),0) runs,
+          COALESCE(SUM(CASE WHEN is_wicket=1 AND COALESCE(dismissal_type,'')<>'RUN_OUT' THEN 1 ELSE 0 END),0) wickets
+        FROM ordered GROUP BY bowler_id
+      ), overs AS (
+        SELECT bowler_id,over_index,SUM(is_legal) legal_balls,SUM(conceded) runs FROM ordered GROUP BY bowler_id,over_index
+      ), maidens AS (
+        SELECT bowler_id,SUM(CASE WHEN legal_balls=6 AND runs=0 THEN 1 ELSE 0 END) maidens FROM overs GROUP BY bowler_id
+      )
+      SELECT p.id,p.name,f.legal_balls,f.runs,f.wickets,COALESCE(m.maidens,0) maidens
+      FROM figures f JOIN players p ON p.id=f.bowler_id LEFT JOIN maidens m ON m.bowler_id=f.bowler_id ORDER BY p.name`).bind(scorecardMatch[1]).all();
     return reply({ batters: batters.results, bowlers: bowlers.results });
   }
 

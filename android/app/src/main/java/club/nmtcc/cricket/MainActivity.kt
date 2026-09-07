@@ -62,7 +62,7 @@ private val Page: Color @Composable get() = LocalBrandPalette.current.page
 private val Ink: Color @Composable get() = LocalBrandPalette.current.ink
 private val Muted: Color @Composable get() = LocalBrandPalette.current.muted
 
-private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, LINEUP, LIVE_LINEUP, TOSS, SCORE }
+private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, LINEUP, LIVE_LINEUP, TOSS, SCORE, LIVE_SCORE }
 
 @Composable
 fun NmtccApp() {
@@ -100,7 +100,8 @@ fun NmtccApp() {
                 Screen.LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.TOURNAMENT }, onSaved = { screen = Screen.TOSS })
                 Screen.LIVE_LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE }, onSaved = { screen = Screen.SCORE }, liveEdit = true)
                 Screen.TOSS -> TossScreen(api, cricketMatch!!, onBack = { screen = Screen.LINEUP }, onStarted = { cricketMatch = it; screen = Screen.SCORE })
-                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = Screen.TOURNAMENT }, onUpdated = { cricketMatch = it }, onManageLineup = { screen = Screen.LIVE_LINEUP })
+                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = Screen.TOURNAMENT }, onUpdated = { cricketMatch = it }, onManageLineup = { screen = Screen.LIVE_LINEUP }, onLiveScore = { screen = Screen.LIVE_SCORE })
+                Screen.LIVE_SCORE -> LiveScoreScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE })
             }
         }
     }
@@ -381,11 +382,14 @@ private fun TossScreen(api: CloudApi, match: CricketMatch, onBack:()->Unit, onSt
 
 @Composable private fun PlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){Column(verticalArrangement=Arrangement.spacedBy(7.dp)){Text(title,fontWeight=FontWeight.Bold);players.forEach{p->Surface(color=if(p.id==selected)Color(0xFFD9F2F0) else Color.White,shape=RoundedCornerShape(5.dp),modifier=Modifier.fillMaxWidth().border(1.dp,if(p.id==selected)ActionTeal else Color.LightGray,RoundedCornerShape(5.dp)).clickable{onSelect(p.id)}){Row(Modifier.padding(11.dp)){Text(p.name,modifier=Modifier.weight(1f));if(p.id==selected)Text("✓",color=ActionTeal)}}}}}
 
+@Composable private fun DropdownChoice(title:String,options:List<String>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){Text(selected.replace('_',' '),modifier=Modifier.weight(1f));Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){options.forEach{option->DropdownMenuItem(text={Text(option.replace('_',' '))},onClick={open=false;onSelect(option)})}}}}}
+@Composable private fun DropdownPlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};val label=players.find{it.id==selected}?.name?:"Select player";Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth(),enabled=players.isNotEmpty()){Text(label,modifier=Modifier.weight(1f));Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){players.forEach{player->DropdownMenuItem(text={Text(player.name)},onClick={open=false;onSelect(player.id)})}}}}}
+
 @Composable
-private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit,onManageLineup:()->Unit){
+private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit,onManageLineup:()->Unit,onLiveScore:()->Unit){
     val scope=rememberCoroutineScope()
     var match by remember{mutableStateOf(initial)};var lineup by remember{mutableStateOf(emptyList<Player>())};var deliveries by remember{mutableStateOf(emptyList<Delivery>())};var scorecard by remember{mutableStateOf(Scorecard(emptyList(),emptyList()))}
-    var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)};var generation by remember{mutableIntStateOf(0)};var showBowler by remember{mutableStateOf(false)};var showWicket by remember{mutableStateOf(false)}
+    var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)};var generation by remember{mutableIntStateOf(0)};var showBowler by remember{mutableStateOf(false)};var showWicket by remember{mutableStateOf(false)};var extraTypeDialog by remember{mutableStateOf<String?>(null)}
     var mustChangeBowler by remember{mutableStateOf(false)};var syncedTick by remember{mutableIntStateOf(0)};var showSynced by remember{mutableStateOf(false)}
     var dismissal by remember{mutableStateOf("BOWLED")};var dismissedId by remember{mutableStateOf("")};var nextBatterId by remember{mutableStateOf("")};var fielderId by remember{mutableStateOf("")};var assistantFielderId by remember{mutableStateOf("")}
     suspend fun snapshot(expected:Int):CricketMatch{val bundle=withContext(Dispatchers.IO){val fresh=api.match(match.id);val current=fresh.innings.lastOrNull();Triple(fresh,if(current!=null)api.deliveries(current.id)else emptyList(),if(current!=null)api.scorecard(current.id)else Scorecard(emptyList(),emptyList()))};if(generation==expected){match=bundle.first;deliveries=bundle.second;scorecard=bundle.third;onUpdated(bundle.first);val current=bundle.first.innings.lastOrNull();val waiting=bundle.first.status=="LIVE"&&current!=null&&current.legalBalls>0&&current.legalBalls%6==0&&bundle.second.firstOrNull()?.bowlerId==current.bowlerId;if(waiting){mustChangeBowler=true;showBowler=true}};return bundle.first}
@@ -395,8 +399,10 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
     val inn=match.innings.lastOrNull();val battingName=if(inn?.battingTeamId==match.teamAId)match.teamAName else match.teamBName;val oversText=inn?.let{"${it.legalBalls/6}.${it.legalBalls%6}"}?:"0.0";val target=if(match.currentInnings==2)(match.innings.firstOrNull()?.runs?:0)+1 else 0;val locked=busy||match.status=="PAUSED"||mustChangeBowler
     val battingPlayers=if(inn==null)emptyList()else lineup.filter{it.teamId==inn.battingTeamId};val bowlingPlayers=if(inn==null)emptyList()else lineup.filter{it.teamId==inn.bowlingTeamId};val dismissed=deliveries.filter{it.wicket}.map{it.dismissedPlayerId}.toSet()
     fun recordDelivery(draft:DeliveryDraft){val before=inn?.legalBalls?:0;if(inn!=null)perform(onSuccess={fresh->val current=fresh.innings.lastOrNull();if(fresh.status=="LIVE"&&current!=null&&current.legalBalls>before&&current.legalBalls%6==0){mustChangeBowler=true;showBowler=true}}){api.addDelivery(inn.id,draft)}}
+    val currentOverBalls=remember(deliveries){val chronological=deliveries.sortedBy{it.sequence};val afterLastBoundary=chronological.fold(emptyList<Delivery>() to 0){acc,ball->val next=acc.first+ball;val legal=acc.second+(if(ball.legal)1 else 0);if(legal==6)emptyList<Delivery>() to 0 else next to legal};afterLastBoundary.first}
     if(showBowler&&inn!=null)AlertDialog(onDismissRequest={if(!mustChangeBowler)showBowler=false},title={Text(if(mustChangeBowler)"Over complete — select next bowler" else "Change bowler")},text={Column{if(mustChangeBowler)Text("A new bowler is required before scoring can continue.",color=Muted,modifier=Modifier.padding(bottom=8.dp));bowlingPlayers.filter{it.id!=inn.bowlerId}.forEach{p->TextButton(onClick={perform(onSuccess={mustChangeBowler=false;showBowler=false}){api.updateParticipants(inn.id,bowlerId=p.id)}},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text(p.name)}}}},confirmButton={if(!mustChangeBowler)TextButton(onClick={showBowler=false}){Text("CLOSE")}})
-    if(showWicket&&inn!=null)AlertDialog(onDismissRequest={showWicket=false},title={Text("Record wicket")},text={LazyColumn(Modifier.heightIn(max=560.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){item{SectionChoice("Dismissal",listOf("BOWLED","CAUGHT","LBW","RUN_OUT","STUMPED","HIT_WICKET","RETIRED_OUT"),dismissal){dismissal=it;fielderId="";assistantFielderId=""}};item{PlayerSelector("Dismissed player",listOfNotNull(battingPlayers.find{it.id==inn.strikerId},battingPlayers.find{it.id==inn.nonStrikerId}),dismissedId){dismissedId=it}};if(dismissal=="CAUGHT")item{PlayerSelector("Caught by *",bowlingPlayers,fielderId){fielderId=it}};if(dismissal=="RUN_OUT"){item{PlayerSelector("Primary fielder *",bowlingPlayers,fielderId){fielderId=it;if(assistantFielderId==it)assistantFielderId=""}};item{PlayerSelector("Assisting fielder (optional)",bowlingPlayers.filterNot{it.id==fielderId},assistantFielderId){assistantFielderId=it}}};item{PlayerSelector("Next batter",battingPlayers.filter{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)},nextBatterId){nextBatterId=it}}}},confirmButton={Button(onClick={showWicket=false;recordDelivery(DeliveryDraft(isWicket=true,dismissalType=dismissal,dismissedPlayerId=dismissedId.ifBlank{inn.strikerId},nextBatterId=nextBatterId.ifBlank{null},fielderId=fielderId.ifBlank{null},assistantFielderId=assistantFielderId.ifBlank{null}))},enabled=dismissedId.isNotBlank()&&((dismissal!="CAUGHT"&&dismissal!="RUN_OUT")||fielderId.isNotBlank())){Text("CONFIRM")}},dismissButton={TextButton(onClick={showWicket=false}){Text("CANCEL")}})
+    if(showWicket&&inn!=null)AlertDialog(onDismissRequest={showWicket=false},title={Text("Record wicket")},text={LazyColumn(Modifier.heightIn(max=560.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){item{DropdownChoice("Dismissal type",listOf("BOWLED","CAUGHT","LBW","RUN_OUT","STUMPED","HIT_WICKET","RETIRED_OUT"),dismissal){dismissal=it;fielderId="";assistantFielderId=""}};item{DropdownPlayerSelector("Dismissed player",listOfNotNull(battingPlayers.find{it.id==inn.strikerId},battingPlayers.find{it.id==inn.nonStrikerId}),dismissedId){dismissedId=it}};if(dismissal=="CAUGHT")item{DropdownPlayerSelector("Caught by *",bowlingPlayers,fielderId){fielderId=it}};if(dismissal=="RUN_OUT"){item{DropdownPlayerSelector("Primary fielder *",bowlingPlayers,fielderId){fielderId=it;if(assistantFielderId==it)assistantFielderId=""}};item{DropdownPlayerSelector("Assisting fielder (optional)",bowlingPlayers.filterNot{it.id==fielderId},assistantFielderId){assistantFielderId=it}}};item{DropdownPlayerSelector("Next batter",battingPlayers.filter{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)},nextBatterId){nextBatterId=it}}}},confirmButton={Button(onClick={showWicket=false;recordDelivery(DeliveryDraft(isWicket=true,dismissalType=dismissal,dismissedPlayerId=dismissedId.ifBlank{inn.strikerId},nextBatterId=nextBatterId.ifBlank{null},fielderId=fielderId.ifBlank{null},assistantFielderId=assistantFielderId.ifBlank{null}))},enabled=dismissedId.isNotBlank()&&((dismissal!="CAUGHT"&&dismissal!="RUN_OUT")||fielderId.isNotBlank())){Text("CONFIRM")}},dismissButton={TextButton(onClick={showWicket=false}){Text("CANCEL")}})
+    if(extraTypeDialog!=null)AlertDialog(onDismissRequest={extraTypeDialog=null},title={Text(if(extraTypeDialog=="WIDE")"Wide runs" else "No-ball extras")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("Select total extra runs");(1..7).chunked(4).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{runs->OutlinedButton(onClick={val type=extraTypeDialog!!;extraTypeDialog=null;recordDelivery(DeliveryDraft(extraRuns=runs,extraType=type))},modifier=Modifier.weight(1f)){Text(runs.toString())}}}}}},confirmButton={},dismissButton={TextButton(onClick={extraTypeDialog=null}){Text("CANCEL")}})
     Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize()){
         AppHeader("Live scoring",onBack=onBack)
         when{
@@ -404,14 +410,13 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
             match.status=="COMPLETE"->EmptyState("Match complete",match.result,"BACK TO TOURNAMENT",onBack)
             match.status=="INNINGS_BREAK"->InningsBreakPanel(match,lineup,busy,error){s,n,b->perform{api.endInnings(match.id,s,n,b)}}
             else->LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(0.dp)){
-                item{ScoringHero(battingName,inn,oversText,match.overs,target,scorecard)}
-                item{BowlerStrip(inn,scorecard,deliveries){showBowler=true}}
+                item{Surface(color=MaterialTheme.colorScheme.surface){Row(Modifier.fillMaxWidth().padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Scoring console",fontSize=22.sp,fontWeight=FontWeight.Bold);Text("${inn.strikerName} batting · ${inn.bowlerName} bowling",color=Muted)}}}}
+                item{BowlerStrip(inn,scorecard,currentOverBalls){showBowler=true}}
                 item{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
-                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={perform{api.setMatchStatus(match.id,if(match.status=="PAUSED")"LIVE" else "PAUSED")}}){Text(if(match.status=="PAUSED")"RESUME" else "PAUSE")};OutlinedButton(onClick=onManageLineup){Text("REPLACE PLAYER")};if(match.status=="PAUSED")Text("Paused",color=AppRed,modifier=Modifier.align(Alignment.CenterVertically))}
+                    Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){OutlinedButton(onClick={perform{api.setMatchStatus(match.id,if(match.status=="PAUSED")"LIVE" else "PAUSED")}}){Text(if(match.status=="PAUSED")"RESUME" else "PAUSE")};OutlinedButton(onClick=onLiveScore){Text("LIVE SCORE")};OutlinedButton(onClick=onManageLineup){Text("PLAYERS")}}
                     Text("Runs",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){(0..6).forEach{r->ScoreButton(r.toString(),locked){recordDelivery(DeliveryDraft(batterRuns=r))}}}
-                    Text("Extras & wicket",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){ScoreButton("WD",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="WIDE"))};ScoreButton("NB",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="NO_BALL"))};ScoreButton("B",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="BYE"))};ScoreButton("LB",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="LEG_BYE"))};ScoreButton("W",locked){dismissedId=inn.strikerId;nextBatterId=battingPlayers.firstOrNull{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)}?.id?:"";showWicket=true}}
-                    if(deliveries.isNotEmpty()){Text("Recent balls",fontWeight=FontWeight.Bold);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){deliveries.take(8).reversed().forEach{BallBadge(it)}}}
-                    ScorecardPanel(scorecard)
+                    Text("Extras & wicket",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){ScoreButton("WD+",locked){extraTypeDialog="WIDE"};ScoreButton("NB+",locked){extraTypeDialog="NO_BALL"};ScoreButton("B",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="BYE"))};ScoreButton("LB",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="LEG_BYE"))};ScoreButton("W",locked){dismissedId=inn.strikerId;nextBatterId=battingPlayers.firstOrNull{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)}?.id?:"";showWicket=true}}
+                    Text("This over",fontWeight=FontWeight.Bold);if(currentOverBalls.isEmpty())Text("New over — no balls yet",color=Muted)else Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){currentOverBalls.forEach{BallBadge(it)}}
                     if(error!=null)Text(error!!,color=MaterialTheme.colorScheme.error)
                     Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(onClick={perform{api.undoDelivery(inn.id)}},enabled=!locked,modifier=Modifier.weight(1f)){Text("UNDO BALL")};Button(onClick={perform{api.endInnings(match.id)}},enabled=!locked,colors=ButtonDefaults.buttonColors(containerColor=AppRed),modifier=Modifier.weight(1f)){Text(if(match.currentInnings==1)"END INNINGS" else "END MATCH")}}
                 }}
@@ -437,6 +442,49 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
 @Composable private fun InningsBreakPanel(match:CricketMatch,lineup:List<Player>,busy:Boolean,error:String?,onStart:(String,String,String)->Unit){val first=match.innings.first();val bats=lineup.filter{it.teamId==first.bowlingTeamId};val bowls=lineup.filter{it.teamId==first.battingTeamId};var s by remember{mutableStateOf(bats.getOrNull(0)?.id?:"")};var n by remember{mutableStateOf(bats.getOrNull(1)?.id?:"")};var b by remember{mutableStateOf(bowls.getOrNull(0)?.id?:"")};LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(22.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{Text("First innings complete",fontSize=25.sp,fontWeight=FontWeight.Bold);Text("Target: ${first.runs+1}",color=ActionTeal,fontSize=20.sp)};item{PlayerSelector("Striker",bats,s){s=it}};item{PlayerSelector("Non-striker",bats.filterNot{it.id==s},n){n=it}};item{PlayerSelector("Opening bowler",bowls,b){b=it}};if(error!=null)item{Text(error,color=MaterialTheme.colorScheme.error)};item{Button(onClick={onStart(s,n,b)},enabled=!busy&&s.isNotBlank()&&n.isNotBlank()&&b.isNotBlank(),modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text("START CHASE")}}}}
 @Composable private fun BallBadge(ball:Delivery){val label=when{ball.wicket->"W";ball.extraType=="WIDE"->"Wd${ball.extraRuns}";ball.extraType=="NO_BALL"->"Nb${ball.extraRuns}";ball.extraType=="BYE"->"B${ball.extraRuns}";ball.extraType=="LEG_BYE"->"Lb${ball.extraRuns}";else->ball.batterRuns.toString()};Surface(color=if(ball.wicket)AppRed else Color(0xFFE8ECEF),shape=CircleShape){Text(label,color=if(ball.wicket)Color.White else Ink,fontSize=12.sp,modifier=Modifier.padding(9.dp))}}
 @Composable private fun ScorecardPanel(card:Scorecard){Column(verticalArrangement=Arrangement.spacedBy(6.dp)){Text("Live scorecard",fontWeight=FontWeight.Bold);card.batters.forEach{s->Row(Modifier.fillMaxWidth()){Text(s.name+(if(s.dismissal.isBlank())" *" else ""),modifier=Modifier.weight(1f));Text("${s.runs} (${s.balls})  4s ${s.fours}  6s ${s.sixes}")}};if(card.bowlers.isNotEmpty())HorizontalDivider();card.bowlers.forEach{s->Row(Modifier.fillMaxWidth()){Text(s.name,modifier=Modifier.weight(1f));Text("${s.legalBalls/6}.${s.legalBalls%6}  ${s.runs}/${s.wickets}")}}}}
+
+private fun dismissalText(stat:BatterStat):String=when(stat.dismissal){"CAUGHT"->"c ${stat.fielderName} b ${stat.dismissalBowlerName}";"RUN_OUT"->"run out (${listOf(stat.fielderName,stat.assistantFielderName).filter{it.isNotBlank()}.joinToString(" / ")})";"BOWLED"->"b ${stat.dismissalBowlerName}";"LBW"->"lbw b ${stat.dismissalBowlerName}";"STUMPED"->"st ${stat.fielderName} b ${stat.dismissalBowlerName}";""->"not out";else->stat.dismissal.lowercase().replace('_',' ')}
+
+@Composable
+private fun LiveScoreScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit){
+    var match by remember{mutableStateOf(initial)}
+    var lineup by remember{mutableStateOf(emptyList<Player>())}
+    var cards by remember{mutableStateOf<Map<String,Scorecard>>(emptyMap())}
+    var error by remember{mutableStateOf<String?>(null)}
+    LaunchedEffect(initial.id){
+        lineup=runCatching{withContext(Dispatchers.IO){api.lineup(initial.id)}}.getOrDefault(emptyList())
+        while(true){
+            runCatching{withContext(Dispatchers.IO){val fresh=api.match(initial.id);fresh to fresh.innings.associate{it.id to api.scorecard(it.id)}}}
+                .onSuccess{match=it.first;cards=it.second;error=null}.onFailure{error=it.message}
+            delay(2000)
+        }
+    }
+    Column(Modifier.fillMaxSize()){
+        AppHeader("Live scorecard",onBack=onBack)
+        LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+            if(error!=null)item{Text(error!!,color=MaterialTheme.colorScheme.error)}
+            items(match.innings,key={it.id}){inn->
+                val card=cards[inn.id]?:Scorecard(emptyList(),emptyList())
+                val teamName=if(inn.battingTeamId==match.teamAId)match.teamAName else match.teamBName
+                val teamPlayers=lineup.filter{it.teamId==inn.battingTeamId}
+                Card{Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    Text("$teamName — Innings ${inn.number}",fontSize=20.sp,fontWeight=FontWeight.Bold)
+                    Text("${inn.runs}/${inn.wickets}  (${inn.legalBalls/6}.${inn.legalBalls%6} overs)",color=ActionTeal,fontSize=18.sp)
+                    HorizontalDivider();Text("BATTING",fontWeight=FontWeight.Bold)
+                    Row{Text("Batter",Modifier.weight(1f));Text("R   B   4s   6s")}
+                    teamPlayers.forEach{player->
+                        val stat=card.batters.find{it.id==player.id}
+                        if(stat!=null)Column{Row{Column(Modifier.weight(1f)){Text(player.name,fontWeight=if(player.id==inn.strikerId)FontWeight.Bold else FontWeight.Normal);Text(dismissalText(stat),fontSize=11.sp,color=Muted)};Text("${stat.runs}   ${stat.balls}   ${stat.fours}   ${stat.sixes}")};HorizontalDivider()}
+                        else Row{Text(player.name,Modifier.weight(1f),color=Muted);Text("DNB",color=Muted)}
+                    }
+                    Spacer(Modifier.height(6.dp));Text("BOWLING",fontWeight=FontWeight.Bold)
+                    Row{Text("Bowler",Modifier.weight(1f));Text("O    M    R    W    Econ")}
+                    card.bowlers.forEach{bowler->val economy=if(bowler.legalBalls==0)"0.00" else String.format("%.2f",bowler.runs*6.0/bowler.legalBalls);Row{Text(bowler.name,Modifier.weight(1f));Text("${bowler.legalBalls/6}.${bowler.legalBalls%6}    ${bowler.maidens}    ${bowler.runs}    ${bowler.wickets}    $economy")}}
+                }}
+            }
+        }
+    }
+}
 
 @Composable
 private fun ScoringScreenLegacy(api:CloudApi, initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit){

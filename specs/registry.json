@@ -49,6 +49,13 @@
       "status": "verified",
       "path": "specs/features/MATCH-006-innings-transition-and-fielding-dismissals.md",
       "implementation": ["worker/src/index.js", "worker/src/cricket.js", "worker/migrations/0005_fielding_dismissals.sql", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "MATCH-007",
+      "title": "Scoring console and complete live scorecard",
+      "status": "verified",
+      "path": "specs/features/MATCH-007-scoring-console-and-live-scorecard.md",
+      "implementation": ["worker/src/index.js", "android/app/src/main/java/club/nmtcc/cricket"]
     }
   ]
 }
