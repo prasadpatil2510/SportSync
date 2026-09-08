@@ -1,6 +1,6 @@
-SportSync Cricket - version 0.9.2.
+SportSync Cricket - version 0.9.3.
 
-- Added cricket-bat icons for striker and non-striker
-- Current-over delivery results now use consistent circular badges
-- Balls are ordered chronologically from first to latest
-- Overs with wides or no-balls scroll horizontally without hiding deliveries
+- Improved long batter-name display
+- Added safe striker replacement before an over starts
+- Added zero-run wide and no-ball options with correct free-run handling
+- Added second-innings runs, balls and wickets requirement

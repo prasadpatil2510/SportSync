@@ -70,6 +70,13 @@
       "status": "verified",
       "path": "specs/features/UI-009-scoreboard-icons-and-ball-order.md",
       "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
+    },
+    {
+      "id": "MATCH-010",
+      "title": "Batter controls and chase context",
+      "status": "verified",
+      "path": "specs/features/MATCH-010-batter-controls-and-chase-context.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
     }
   ]
 }
