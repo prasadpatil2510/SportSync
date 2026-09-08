@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class Tournament(val id: String, val name: String, val city: String = "", val ground: String = "", val startDate: String = "", val endDate: String = "", val status: String = "ONGOING", val category: String = "OPEN", val ballType: String = "TENNIS", val pitchType: String = "", val matchType: String = "LIMITED_OVERS")
+data class Tournament(val id: String, val name: String, val city: String = "", val ground: String = "", val startDate: String = "", val endDate: String = "", val status: String = "ONGOING", val category: String = "OPEN", val ballType: String = "TENNIS", val pitchType: String = "", val matchType: String = "LIMITED_OVERS", val auctionReference: String = "")
 data class Team(val id: String, val name: String, val shortName: String = "", val city: String = "", val captainName: String = "", val captainPhone: String = "", val logoUrl: String? = null)
 data class Player(val id: String, val name: String, val role: String = "PLAYER", val teamId: String = "", val isAdmin: Boolean = false, val isCaptain: Boolean = false, val isWicketKeeper: Boolean = false, val photoUrl: String? = null)
 data class TournamentDraft(val name: String, val city: String, val ground: String, val organiserName: String, val organiserPhone: String, val organiserEmail: String, val startDate: String, val endDate: String, val category: String, val ballType: String, val pitchType: String, val matchType: String)
@@ -20,6 +20,9 @@ data class BatterStat(val id:String,val name:String,val runs:Int,val balls:Int,v
 data class BowlerStat(val id:String,val name:String,val legalBalls:Int,val runs:Int,val wickets:Int,val maidens:Int=0)
 data class Scorecard(val batters:List<BatterStat>,val bowlers:List<BowlerStat>)
 data class AuctionRefreshResult(val teamsCreated:Int,val teamsUpdated:Int,val playersCreated:Int,val playersUpdated:Int,val membershipsAdded:Int)
+data class ScheduleDraft(val tournamentId:String,val format:String,val teamIds:Set<String>,val startDateTime:String,val intervalMinutes:Int,val ground:String,val overs:Int)
+data class ScheduleResult(val matchesCreated:Int,val rounds:Int)
+data class PointRow(val teamId:String,val teamName:String,val logoUrl:String?,val played:Int,val won:Int,val lost:Int,val tied:Int,val noResult:Int,val points:Int,val nrr:Double)
 
 class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private val writeToken: String = BuildConfig.API_WRITE_TOKEN) {
     private fun request(path: String, method: String = "GET", payload: JSONObject? = null): String {
@@ -69,8 +72,8 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
         return JSONObject(request("/api/teams/$teamId", "PUT", json)).toTeam()
     }
     fun players(): List<Player> = JSONArray(request("/api/players")).objects().map { it.toPlayer() }
-    fun refreshAuctionData(tournamentId: String): AuctionRefreshResult {
-        val value = JSONObject(request("/api/integrations/auction/refresh", "POST", JSONObject().put("tournamentId", tournamentId)))
+    fun refreshAuctionData(tournamentId: String, auctionReference:String): AuctionRefreshResult {
+        val value = JSONObject(request("/api/integrations/auction/refresh", "POST", JSONObject().put("tournamentId", tournamentId).put("auctionReference",auctionReference)))
         return AuctionRefreshResult(value.optInt("teamsCreated"), value.optInt("teamsUpdated"), value.optInt("playersCreated"), value.optInt("playersUpdated"), value.optInt("membershipsAdded"))
     }
     fun teamPlayers(teamId: String): List<Player> = JSONArray(request("/api/teams/$teamId/players")).objects().map { it.toPlayer() }
@@ -81,6 +84,8 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     fun addPlayerToTeam(teamId: String, playerId: String) { request("/api/teams/$teamId/players/$playerId", "PUT", JSONObject()) }
     fun removePlayerFromTeam(teamId: String, playerId: String) { request("/api/teams/$teamId/players/$playerId", "DELETE", JSONObject()) }
     fun tournamentMatches(tournamentId: String): List<CricketMatch> = JSONArray(request("/api/tournaments/$tournamentId/matches")).objects().map { it.toMatch() }
+    fun pointsTable(tournamentId:String):List<PointRow> = JSONArray(request("/api/tournaments/$tournamentId/points-table")).objects().map { PointRow(it.string("teamId"),it.string("teamName"),it.optString("logoUrl").takeIf(String::isNotBlank),it.optInt("played"),it.optInt("won"),it.optInt("lost"),it.optInt("tied"),it.optInt("noResult"),it.optInt("points"),it.optDouble("nrr")) }
+    fun scheduleMatches(draft:ScheduleDraft):ScheduleResult { val value=JSONObject(request("/api/tournaments/${draft.tournamentId}/schedule","POST",JSONObject().put("format",draft.format).put("teamIds",JSONArray(draft.teamIds.toList())).put("startDateTime",draft.startDateTime).put("intervalMinutes",draft.intervalMinutes).put("ground",draft.ground).put("oversPerInnings",draft.overs)));return ScheduleResult(value.optInt("matchesCreated"),value.optInt("rounds")) }
     fun match(matchId: String): CricketMatch = JSONObject(request("/api/matches/$matchId")).toMatch()
     fun createMatch(draft: MatchDraft): CricketMatch = JSONObject(request("/api/matches", "POST", JSONObject().put("tournamentId",draft.tournamentId).put("roundName",draft.roundName).put("teamAId",draft.teamAId).put("teamBId",draft.teamBId).put("scheduledAt",draft.scheduledAt).put("ground",draft.ground).put("oversPerInnings",draft.overs))).toMatch()
     fun saveLineup(matchId: String, teamId: String, playerIds: Set<String>) { request("/api/matches/$matchId/lineup/$teamId", "PUT", JSONObject().put("playerIds", JSONArray(playerIds.toList()))) }
@@ -97,7 +102,7 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
 
 private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
 private fun JSONObject.string(name: String) = optString(name, "")
-private fun JSONObject.toTournament() = Tournament(id = string("id"), name = string("name"), city = string("city"), ground = string("ground"), startDate = string("start_date").ifBlank { string("startDate") }, endDate = string("end_date").ifBlank { string("endDate") }, status = string("status").ifBlank { "ONGOING" }, category = string("category").ifBlank { "OPEN" }, ballType = string("ball_type").ifBlank { string("ballType") }.ifBlank { "TENNIS" }, pitchType = string("pitch_type").ifBlank { string("pitchType") }, matchType = string("match_type").ifBlank { string("matchType") })
+private fun JSONObject.toTournament() = Tournament(id = string("id"), name = string("name"), city = string("city"), ground = string("ground"), startDate = string("start_date").ifBlank { string("startDate") }, endDate = string("end_date").ifBlank { string("endDate") }, status = string("status").ifBlank { "ONGOING" }, category = string("category").ifBlank { "OPEN" }, ballType = string("ball_type").ifBlank { string("ballType") }.ifBlank { "TENNIS" }, pitchType = string("pitch_type").ifBlank { string("pitchType") }, matchType = string("match_type").ifBlank { string("matchType") }, auctionReference=string("auction_reference").ifBlank{string("auctionReference")})
 private fun JSONObject.toTeam() = Team(id = string("id"), name = string("name"), shortName = string("short_name").ifBlank { string("shortName") }, city = string("city"), captainName = string("captain_name").ifBlank { string("captainName") }, captainPhone = string("captain_phone").ifBlank { string("captainPhone") }, logoUrl = optString("logo_url").takeIf { it.isNotBlank() })
 private fun JSONObject.toPlayer() = Player(id = string("id"), name = string("name"), role = string("member_role").ifBlank { string("role") }.ifBlank { "PLAYER" }, teamId = string("team_id"), isAdmin = optInt("is_admin") == 1, isCaptain = optInt("is_captain") == 1, isWicketKeeper = optInt("is_wicket_keeper") == 1, photoUrl = optString("photo_url").takeIf { it.isNotBlank() })
 private fun JSONObject.toInnings() = Innings(id=string("id"),number=optInt("innings_number"),battingTeamId=string("batting_team_id"),bowlingTeamId=string("bowling_team_id"),runs=optInt("runs"),wickets=optInt("wickets"),legalBalls=optInt("legal_balls"),status=string("status"),strikerId=string("striker_id"),nonStrikerId=string("non_striker_id"),bowlerId=string("bowler_id"),strikerName=string("striker_name"),nonStrikerName=string("non_striker_name"),bowlerName=string("bowler_name"))

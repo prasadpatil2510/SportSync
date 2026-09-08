@@ -1,5 +1,6 @@
 import { fieldersRequired, isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
 import { absoluteAssetUrl, normalizedName, shortName } from "./integration.js";
+import { buildStandings, knockoutOpening, roundRobin } from "./scheduling.js";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -89,12 +90,27 @@ async function fetchAuctionJson(env, path) {
   return { base, value: await response.json() };
 }
 
-async function refreshAuctionData(env, tournamentId) {
+async function resolveAuction(env, reference) {
+  const requested = clean(reference);
+  if (!requested) throw new Error("Enter an auction ID, exact auction name, or auction link");
+  const catalog = (await fetchAuctionJson(env, "auctions")).value;
+  const auctions = Array.isArray(catalog) ? catalog : catalog.auctions;
+  if (!Array.isArray(auctions)) throw new Error("Auction catalogue is unavailable");
+  const urlPart = requested.split(/[/?#]/).filter(Boolean).at(-1);
+  const found = auctions.find(item => clean(item.id) === requested || clean(item.id) === urlPart || normalizedName(item.name) === normalizedName(requested));
+  if (!found) throw new Error("Auction not found. Check the exact ID, name, or link");
+  const activeId = clean(catalog.activeId || catalog.activeAuctionId);
+  if (activeId && clean(found.id) !== activeId) throw new Error(`Make “${clean(found.name)}” active in the auctioneer website, then import again`);
+  return found;
+}
+
+async function refreshAuctionData(env, tournamentId, auctionReference) {
   const tournament = await env.DB.prepare("SELECT id FROM tournaments WHERE id=?").bind(tournamentId).first();
   if (!tournament) throw new Error("Tournament not found");
   const runId = makeId("import");
   await env.DB.prepare("INSERT INTO import_runs(id,source,tournament_id,status) VALUES(?,'AUCTION',?,'RUNNING')").bind(runId,tournamentId).run();
   try {
+    const auction = await resolveAuction(env, auctionReference);
     const [stateResult, registrationResult] = await Promise.all([
       fetchAuctionJson(env, "state"), fetchAuctionJson(env, "player-registrations")
     ]);
@@ -159,8 +175,9 @@ async function refreshAuctionData(env, tournamentId) {
     }
     statements.push(env.DB.prepare(`UPDATE import_runs SET status='SUCCESS',teams_created=?,teams_updated=?,players_created=?,players_updated=?,memberships_added=?,completed_at=CURRENT_TIMESTAMP WHERE id=?`)
       .bind(counts.teamsCreated,counts.teamsUpdated,counts.playersCreated,counts.playersUpdated,counts.membershipsAdded,runId));
+    statements.push(env.DB.prepare("UPDATE tournaments SET auction_reference=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(clean(auction.id), tournamentId));
     if (statements.length) await env.DB.batch(statements);
-    return { success: true, importId: runId, ...counts };
+    return { success: true, importId: runId, auctionId: clean(auction.id), auctionName: clean(auction.name), ...counts };
   } catch (error) {
     await env.DB.prepare("UPDATE import_runs SET status='FAILED',error_text=?,completed_at=CURRENT_TIMESTAMP WHERE id=?").bind(String(error.message || error).slice(0,500),runId).run();
     throw error;
@@ -230,7 +247,7 @@ async function route(request, env) {
     if (!requireAdmin(request, env)) return fail("Admin access required", 401);
     const input = await body(request);
     if (!clean(input.tournamentId)) return fail("Tournament is required");
-    return reply(await refreshAuctionData(env, clean(input.tournamentId)));
+    return reply(await refreshAuctionData(env, clean(input.tournamentId), clean(input.auctionReference)));
   }
 
   if (path === "/api/public/auction/player-stats" && request.method === "GET") {
@@ -255,6 +272,60 @@ async function route(request, env) {
       FROM matches m JOIN teams a ON a.id=m.team_a_id JOIN teams b ON b.id=m.team_b_id
       WHERE m.tournament_id=? ORDER BY m.created_at DESC`).bind(tournamentMatchesMatch[1]).all();
     return reply(result.results);
+  }
+
+  const tournamentPointsMatch = path.match(/^\/api\/tournaments\/([^/]+)\/points-table$/);
+  if (tournamentPointsMatch && request.method === "GET") {
+    const tournamentId = tournamentPointsMatch[1];
+    const [teamsResult, matchesResult] = await Promise.all([
+      env.DB.prepare(`SELECT t.id,t.name,t.logo_url FROM teams t JOIN tournament_teams tt ON tt.team_id=t.id WHERE tt.tournament_id=? AND t.is_active=1`).bind(tournamentId).all(),
+      env.DB.prepare(`SELECT * FROM matches WHERE tournament_id=? AND status='COMPLETE' AND stage_type='LEAGUE'`).bind(tournamentId).all()
+    ]);
+    const completed = [];
+    for (const match of matchesResult.results) {
+      const innings = await env.DB.prepare(`SELECT i.*,
+        (SELECT COUNT(*) FROM match_players mp WHERE mp.match_id=i.match_id AND mp.team_id=i.batting_team_id AND mp.is_playing=1) batting_players,
+        ? overs_per_innings FROM innings i WHERE i.match_id=? ORDER BY i.innings_number`).bind(match.overs_per_innings, match.id).all();
+      completed.push({ ...match, innings: innings.results });
+    }
+    return reply(buildStandings(teamsResult.results, completed));
+  }
+
+  const tournamentScheduleMatch = path.match(/^\/api\/tournaments\/([^/]+)\/schedule$/);
+  if (tournamentScheduleMatch && request.method === "POST") {
+    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    const tournamentId = tournamentScheduleMatch[1];
+    const input = await body(request);
+    const teamIds = Array.isArray(input.teamIds) ? [...new Set(input.teamIds.map(clean).filter(Boolean))] : [];
+    if (teamIds.length < 2) return fail("Select at least two teams");
+    if (!validDateTime(input.startDateTime)) return fail("Select a valid first match date and time");
+    const existing = await env.DB.prepare("SELECT COUNT(*) count FROM matches WHERE tournament_id=?").bind(tournamentId).first();
+    if (Number(existing.count)) return fail("This tournament already has matches. Add further matches manually");
+    const allowed = await env.DB.prepare(`SELECT team_id FROM tournament_teams WHERE tournament_id=?`).bind(tournamentId).all();
+    const allowedIds = new Set(allowed.results.map(row => row.team_id));
+    if (teamIds.some(id => !allowedIds.has(id))) return fail("One or more selected teams are not in this tournament");
+    const format = clean(input.format).toUpperCase();
+    let rounds, stage = "LEAGUE";
+    if (format === "ROUND_ROBIN") rounds = roundRobin(teamIds, 1);
+    else if (format === "DOUBLE_ROUND_ROBIN") rounds = roundRobin(teamIds, 2);
+    else if (format === "KNOCKOUT") { rounds = knockoutOpening(teamIds); stage = "KNOCKOUT"; }
+    else return fail("Unsupported schedule format");
+    const start = new Date(`${input.startDateTime.replace(" ", "T")}:00Z`);
+    const interval = Math.min(10080, Math.max(15, Number(input.intervalMinutes) || 120));
+    const overs = Math.max(1, Number(input.oversPerInnings) || 20);
+    const statements = [];
+    let fixtureIndex = 0;
+    rounds.forEach((pairs, roundIndex) => pairs.forEach(([teamA, teamB]) => {
+      const scheduled = new Date(start.getTime() + fixtureIndex * interval * 60000).toISOString().slice(0, 16).replace("T", " ");
+      const roundsPerLeg = format === "DOUBLE_ROUND_ROBIN" ? rounds.length / 2 : rounds.length;
+      const leg = format === "DOUBLE_ROUND_ROBIN" && roundIndex >= roundsPerLeg ? "Leg 2 " : "";
+      const roundName = stage === "KNOCKOUT" ? "Knockout Opening Round" : `League ${leg}Round ${(roundIndex % roundsPerLeg) + 1}`;
+      statements.push(env.DB.prepare(`INSERT INTO matches(id,tournament_id,round_name,team_a_id,team_b_id,scheduled_at,ground,overs_per_innings,stage_type) VALUES(?,?,?,?,?,?,?,?,?)`)
+        .bind(makeId("match"), tournamentId, roundName, teamA, teamB, scheduled, clean(input.ground), overs, stage));
+      fixtureIndex++;
+    }));
+    if (statements.length) await env.DB.batch(statements);
+    return reply({ success: true, format, rounds: rounds.length, matchesCreated: fixtureIndex }, 201);
   }
 
   if (path === "/api/matches" && request.method === "GET") {

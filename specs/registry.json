@@ -84,6 +84,13 @@
       "status": "verified",
       "path": "specs/features/MATCH-011-home-data-and-date-pickers.md",
       "implementation": ["worker/src/index.js", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "TOUR-012",
+      "title": "Auction-linked scheduling and standings",
+      "status": "implemented",
+      "path": "specs/features/TOUR-012-auction-scheduling-and-standings.md",
+      "implementation": ["worker/src/scheduling.js", "worker/src/index.js", "worker/migrations/0006_scheduling_and_standings.sql", "android/app/src/main/java/club/nmtcc/cricket"]
     }
   ]
 }
