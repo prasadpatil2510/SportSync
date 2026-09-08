@@ -1,6 +1,7 @@
-SportSync Cricket - version 0.9.3.
+SportSync Cricket - version 0.9.4.
 
-- Improved long batter-name display
-- Added safe striker replacement before an over starts
-- Added zero-run wide and no-ball options with correct free-run handling
-- Added second-innings runs, balls and wickets requirement
+- Connected the home Matches tab with live matches shown first
+- Connected the home Teams tab to all active teams
+- Added calendar date selectors for tournaments
+- Added a date and time selector for matches
+- Added server validation to reject invalid scheduling values

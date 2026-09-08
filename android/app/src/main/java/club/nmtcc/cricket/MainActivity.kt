@@ -2,6 +2,8 @@ package club.nmtcc.cricket
 
 import android.os.Bundle
 import android.content.Context
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -32,6 +34,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import coil3.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import java.util.Calendar
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,22 +90,23 @@ fun NmtccApp() {
         var tournament by remember { mutableStateOf<Tournament?>(null) }
         var team by remember { mutableStateOf<Team?>(null) }
         var cricketMatch by remember { mutableStateOf<CricketMatch?>(null) }
+        var returnHome by remember { mutableStateOf(false) }
         var refresh by remember { mutableIntStateOf(0) }
         Surface(Modifier.fillMaxSize(), color = Page) {
             when (screen) {
-                Screen.HOME -> TournamentListScreen(api, refresh, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onOpen = { tournament = it; screen = Screen.TOURNAMENT })
+                Screen.HOME -> TournamentListScreen(api, refresh, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onOpen = { tournament = it; returnHome=false; screen = Screen.TOURNAMENT }, onTeam = { team=it; returnHome=true; screen=Screen.TEAM }, onMatch = { cricketMatch=it; returnHome=true; screen=if(it.status=="SCHEDULED")Screen.LINEUP else Screen.SCORE })
                 Screen.CREATE_TOURNAMENT -> CreateTournamentScreen(api, onBack = { screen = Screen.HOME }, onCreated = { tournament = it; refresh++; screen = Screen.TOURNAMENT })
-                Screen.TOURNAMENT -> TournamentScreen(api, tournament!!, refresh, onBack = { refresh++; screen = Screen.HOME }, onAddTeam = { screen = Screen.ADD_TEAM }, onTeam = { team = it; screen = Screen.TEAM }, onNewMatch = { screen = Screen.CREATE_MATCH }, onMatch = { cricketMatch = it; screen = if (it.status == "SCHEDULED") Screen.LINEUP else Screen.SCORE })
+                Screen.TOURNAMENT -> TournamentScreen(api, tournament!!, refresh, onBack = { refresh++; screen = Screen.HOME }, onAddTeam = { screen = Screen.ADD_TEAM }, onTeam = { team = it; returnHome=false; screen = Screen.TEAM }, onNewMatch = { screen = Screen.CREATE_MATCH }, onMatch = { cricketMatch = it; returnHome=false; screen = if (it.status == "SCHEDULED") Screen.LINEUP else Screen.SCORE })
                 Screen.ADD_TEAM -> AddTeamScreen(api, tournament!!, onBack = { screen = Screen.TOURNAMENT }, onCreated = { refresh++; screen = Screen.TOURNAMENT })
-                Screen.TEAM -> TeamScreen(api, team!!, refresh, onBack = { refresh++; screen = Screen.TOURNAMENT }, onEditTeam = { screen = Screen.EDIT_TEAM }, onAddPlayer = { screen = Screen.ADD_PLAYER }, onAddExisting = { screen = Screen.ADD_EXISTING_PLAYER }, onChanged = { refresh++ })
+                Screen.TEAM -> TeamScreen(api, team!!, refresh, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onEditTeam = { screen = Screen.EDIT_TEAM }, onAddPlayer = { screen = Screen.ADD_PLAYER }, onAddExisting = { screen = Screen.ADD_EXISTING_PLAYER }, onChanged = { refresh++ })
                 Screen.EDIT_TEAM -> EditTeamScreen(api, team!!, onBack = { screen = Screen.TEAM }, onSaved = { team = it; refresh++; screen = Screen.TEAM })
                 Screen.ADD_PLAYER -> AddPlayerScreen(api, team!!, onBack = { screen = Screen.TEAM }, onCreated = { refresh++; screen = Screen.TEAM })
                 Screen.ADD_EXISTING_PLAYER -> AddExistingPlayerScreen(api, team!!, onBack = { screen = Screen.TEAM }, onAdded = { refresh++; screen = Screen.TEAM })
                 Screen.CREATE_MATCH -> CreateMatchScreen(api, tournament!!, onBack = { screen = Screen.TOURNAMENT }, onCreated = { cricketMatch = it; screen = Screen.LINEUP })
-                Screen.LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.TOURNAMENT }, onSaved = { screen = Screen.TOSS })
+                Screen.LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onSaved = { screen = Screen.TOSS })
                 Screen.LIVE_LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE }, onSaved = { screen = Screen.SCORE }, liveEdit = true)
                 Screen.TOSS -> TossScreen(api, cricketMatch!!, onBack = { screen = Screen.LINEUP }, onStarted = { cricketMatch = it; screen = Screen.SCORE })
-                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = Screen.TOURNAMENT }, onUpdated = { cricketMatch = it })
+                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onUpdated = { cricketMatch = it })
             }
         }
     }
@@ -150,31 +155,36 @@ private fun AppHeader(title: String, back: Boolean = true, onBack: () -> Unit = 
 }
 
 @Composable
-private fun TournamentListScreen(api: CloudApi, refresh: Int, onCreate: () -> Unit, onOpen: (Tournament) -> Unit) {
+private fun TournamentListScreen(api: CloudApi, refresh: Int, onCreate: () -> Unit, onOpen: (Tournament) -> Unit, onTeam:(Team)->Unit, onMatch:(CricketMatch)->Unit) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var tournaments by remember { mutableStateOf(emptyList<Tournament>()) }
+    var matches by remember { mutableStateOf(emptyList<CricketMatch>()) }
+    var teams by remember { mutableStateOf(emptyList<Team>()) }
+    var tab by remember { mutableStateOf("Tournaments") }
     LaunchedEffect(refresh) {
         loading = true
-        runCatching { withContext(Dispatchers.IO) { api.tournaments() } }.onSuccess { tournaments = it }.onFailure { error = it.message }
+        runCatching { withContext(Dispatchers.IO) { Triple(api.tournaments(),api.matches(),api.teams()) } }.onSuccess { tournaments=it.first;matches=it.second;teams=it.third;error=null }.onFailure { error = it.message }
         loading = false
     }
     Column(Modifier.fillMaxSize()) {
         AppHeader("SportSync Cricket", back = false)
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(14.dp), horizontalArrangement = Arrangement.SpaceAround) {
-            listOf("Matches", "Tournaments", "Teams", "Stats").forEach { Text(it, color = if (it == "Tournaments") AppRed else Ink, fontWeight = if (it == "Tournaments") FontWeight.Bold else FontWeight.Normal) }
+            listOf("Matches", "Tournaments", "Teams", "Stats").forEach { item->Text(item, color = if (item == tab) AppRed else Ink, fontWeight = if (item == tab) FontWeight.Bold else FontWeight.Normal,modifier=Modifier.clickable{tab=item}.padding(6.dp)) }
         }
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if(tab=="Tournaments")Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Want to host a tournament?", fontSize = 18.sp, modifier = Modifier.weight(1f))
             Button(onClick = onCreate, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("Register") }
         }
-        ChoiceRow(listOf("Your", "Participate", "Network", "All"), "Your", {})
+        if(tab=="Tournaments")ChoiceRow(listOf("Your", "Participate", "Network", "All"), "Your", {})
         if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = AppRed) }
-        else if (error != null) ErrorCard(error!!) { scope.launch { loading = true; runCatching { withContext(Dispatchers.IO) { api.tournaments() } }.onSuccess { tournaments = it; error = null }; loading = false } }
-        else if (tournaments.isEmpty()) EmptyState("No tournaments yet", "Create your first tournament to add teams and begin scheduling.", "CREATE TOURNAMENT", onCreate)
-        else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(tournaments, key = { it.id }) { item -> TournamentCard(item) { onOpen(item) } }
+        else if (error != null) ErrorCard(error!!) { scope.launch { loading=true;runCatching{withContext(Dispatchers.IO){Triple(api.tournaments(),api.matches(),api.teams())}}.onSuccess{tournaments=it.first;matches=it.second;teams=it.third;error=null};loading=false } }
+        else when(tab){
+            "Matches"->if(matches.isEmpty())EmptyState("No matches yet","Create a match inside a tournament and it will appear here.","VIEW TOURNAMENTS"){tab="Tournaments"}else LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(matches,key={it.id}){item->MatchCard(item){onMatch(item)}}}
+            "Teams"->if(teams.isEmpty())EmptyState("No teams yet","Teams added to your tournaments will appear here.","VIEW TOURNAMENTS"){tab="Tournaments"}else LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(teams,key={it.id}){item->TeamCard(item){onTeam(item)}}}
+            "Stats"->EmptyState("Stats","Tournament and player statistics will appear here.","VIEW MATCHES"){tab="Matches"}
+            else->if(tournaments.isEmpty())EmptyState("No tournaments yet","Create your first tournament to add teams and begin scheduling.","CREATE TOURNAMENT",onCreate)else LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){items(tournaments,key={it.id}){item->TournamentCard(item){onOpen(item)}}}
         }
     }
 }
@@ -212,7 +222,7 @@ private fun CreateTournamentScreen(api: CloudApi, onBack: () -> Unit, onCreated:
             item { FormField("Organiser name*", organiser) { organiser = it } }
             item { FormField("Organiser number", phone) { phone = it } }
             item { FormField("Organiser email", email) { email = it } }
-            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Box(Modifier.weight(1f)) { FormField("Start date*", start) { start = it } }; Box(Modifier.weight(1f)) { FormField("End date*", end) { end = it } } } }
+            item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Box(Modifier.weight(1f)) { DateSelector("Start date*", start) { start = it;if(end.isNotBlank()&&end<it)end=it } }; Box(Modifier.weight(1f)) { DateSelector("End date*", end) { end = it } } } }
             item { SectionChoice("Tournament category*", listOf("OPEN", "CORPORATE", "COMMUNITY", "SCHOOL", "SERIES", "COLLEGE"), category) { category = it } }
             item { SectionChoice("Select ball type*", listOf("TENNIS", "LEATHER", "OTHER"), ball) { ball = it } }
             item { SectionChoice("Pitch type", listOf("ROUGH", "CEMENT", "TURF", "ASTROTURF", "MATTING"), pitch) { pitch = it } }
@@ -220,7 +230,7 @@ private fun CreateTournamentScreen(api: CloudApi, onBack: () -> Unit, onCreated:
             if (error != null) item { Text(error!!, color = MaterialTheme.colorScheme.error) }
         }
         Button(onClick = {
-            if (name.isBlank() || city.isBlank() || ground.isBlank() || organiser.isBlank() || start.isBlank() || end.isBlank()) { error = "Complete all required fields"; return@Button }
+            if (name.isBlank() || city.isBlank() || ground.isBlank() || organiser.isBlank() || start.isBlank() || end.isBlank()) { error = "Complete all required fields"; return@Button };if(end<start){error="End date cannot be before start date";return@Button}
             saving = true; scope.launch { runCatching { withContext(Dispatchers.IO) { api.createTournament(TournamentDraft(name,city,ground,organiser,phone,email,start,end,category,ball,pitch,matchType)) } }.onSuccess(onCreated).onFailure { error = it.message }; saving = false }
         }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(64.dp), shape = RoundedCornerShape(0.dp), colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text(if (saving) "SAVING…" else "CREATE TOURNAMENT", fontWeight = FontWeight.Bold) }
     }
@@ -349,14 +359,14 @@ private fun AddPlayerScreen(api: CloudApi, team: Team, onBack: () -> Unit, onCre
 
 @Composable
 private fun MatchCard(item: CricketMatch, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick=onClick), elevation=CardDefaults.cardElevation(2.dp)) { Column(Modifier.fillMaxWidth().padding(16.dp)) { Row(verticalAlignment=Alignment.CenterVertically) { Text(item.roundName, color=Muted, modifier=Modifier.weight(1f)); RoleBadge(item.status) }; Spacer(Modifier.height(8.dp)); Text("${item.teamAName}  vs  ${item.teamBName}",fontSize=20.sp,fontWeight=FontWeight.Bold); Text("${item.overs} overs • ${item.ground}",color=Muted); if(item.result.isNotBlank()) Text(item.result,color=ActionTeal,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=8.dp)) } }
+    Card(Modifier.fillMaxWidth().clickable(onClick=onClick), elevation=CardDefaults.cardElevation(2.dp)) { Column(Modifier.fillMaxWidth().padding(16.dp)) { Row(verticalAlignment=Alignment.CenterVertically) { Text(item.roundName, color=Muted, modifier=Modifier.weight(1f)); RoleBadge(item.status) }; Spacer(Modifier.height(8.dp)); Text("${item.teamAName}  vs  ${item.teamBName}",fontSize=20.sp,fontWeight=FontWeight.Bold); Text(listOf(item.scheduledAt,"${item.overs} overs",item.ground).filter{it.isNotBlank()}.joinToString(" • "),color=Muted); if(item.result.isNotBlank()) Text(item.result,color=ActionTeal,fontWeight=FontWeight.SemiBold,modifier=Modifier.padding(top=8.dp)) } }
 }
 
 @Composable
 private fun CreateMatchScreen(api: CloudApi, tournament: Tournament, onBack: () -> Unit, onCreated: (CricketMatch) -> Unit) {
     val scope=rememberCoroutineScope(); var teams by remember{mutableStateOf(emptyList<Team>())}; var teamA by remember{mutableStateOf("")}; var teamB by remember{mutableStateOf("")}; var round by remember{mutableStateOf("League Match")}; var whenText by remember{mutableStateOf("")}; var ground by remember{mutableStateOf(tournament.ground)}; var overs by remember{mutableStateOf("20")}; var error by remember{mutableStateOf<String?>(null)}; var saving by remember{mutableStateOf(false)}
     LaunchedEffect(tournament.id){ teams=runCatching{withContext(Dispatchers.IO){api.tournamentTeams(tournament.id)}}.getOrDefault(emptyList()) }
-    Column(Modifier.fillMaxSize()){AppHeader("Start a match",onBack=onBack); LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{FormField("Round",round){round=it}};item{Text("Select first team",fontWeight=FontWeight.Bold);TeamSelector(teams,teamA){teamA=it}};item{Text("Select second team",fontWeight=FontWeight.Bold);TeamSelector(teams.filterNot{it.id==teamA},teamB){teamB=it}};item{FormField("Date and time",whenText){whenText=it}};item{FormField("Ground",ground){ground=it}};item{FormField("Overs per innings",overs){if(it.all(Char::isDigit))overs=it}};if(error!=null)item{Text(error!!,color=MaterialTheme.colorScheme.error)}}; Button(onClick={if(teamA.isBlank()||teamB.isBlank()){error="Select two teams";return@Button};saving=true;scope.launch{runCatching{withContext(Dispatchers.IO){api.createMatch(MatchDraft(tournament.id,round,teamA,teamB,whenText,ground,overs.toIntOrNull()?:20))}}.onSuccess(onCreated).onFailure{error=it.message};saving=false}},enabled=!saving,modifier=Modifier.fillMaxWidth().height(64.dp),shape=RoundedCornerShape(0.dp),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text(if(saving)"CREATING…" else "SELECT PLAYING XI")}}
+    Column(Modifier.fillMaxSize()){AppHeader("Start a match",onBack=onBack); LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{FormField("Round",round){round=it}};item{Text("Select first team",fontWeight=FontWeight.Bold);TeamSelector(teams,teamA){teamA=it}};item{Text("Select second team",fontWeight=FontWeight.Bold);TeamSelector(teams.filterNot{it.id==teamA},teamB){teamB=it}};item{DateTimeSelector("Date and time*",whenText){whenText=it}};item{FormField("Ground",ground){ground=it}};item{FormField("Overs per innings",overs){if(it.all(Char::isDigit))overs=it}};if(error!=null)item{Text(error!!,color=MaterialTheme.colorScheme.error)}}; Button(onClick={if(teamA.isBlank()||teamB.isBlank()){error="Select two teams";return@Button};if(whenText.isBlank()){error="Select match date and time";return@Button};saving=true;scope.launch{runCatching{withContext(Dispatchers.IO){api.createMatch(MatchDraft(tournament.id,round,teamA,teamB,whenText,ground,overs.toIntOrNull()?:20))}}.onSuccess(onCreated).onFailure{error=it.message};saving=false}},enabled=!saving,modifier=Modifier.fillMaxWidth().height(64.dp),shape=RoundedCornerShape(0.dp),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text(if(saving)"CREATING…" else "SELECT PLAYING XI")}}
 }
 
 @Composable
@@ -501,6 +511,16 @@ private fun ScoringScreenLegacy(api:CloudApi, initial:CricketMatch,onBack:()->Un
 @Composable private fun ScoreButton(text:String,busy:Boolean,onClick:()->Unit){OutlinedButton(onClick=onClick,enabled=!busy,contentPadding=PaddingValues(0.dp),modifier=Modifier.sizeIn(minWidth=42.dp,minHeight=44.dp)){Text(text,fontWeight=FontWeight.Bold)}}
 
 @Composable private fun FormField(label: String, value: String, onValue: (String) -> Unit) { OutlinedTextField(value, onValue, label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = ActionTeal, focusedLabelColor = ActionTeal)) }
+
+@Composable private fun DateSelector(label:String,value:String,onValue:(String)->Unit){
+    val context=LocalContext.current
+    OutlinedButton(onClick={val now=Calendar.getInstance();DatePickerDialog(context,{_,year,month,day->onValue(String.format(Locale.US,"%04d-%02d-%02d",year,month+1,day))},now.get(Calendar.YEAR),now.get(Calendar.MONTH),now.get(Calendar.DAY_OF_MONTH)).show()},modifier=Modifier.fillMaxWidth().height(56.dp),shape=RoundedCornerShape(4.dp)){Text(if(value.isBlank())label else value,modifier=Modifier.weight(1f),maxLines=1);Text("▣")}
+}
+
+@Composable private fun DateTimeSelector(label:String,value:String,onValue:(String)->Unit){
+    val context=LocalContext.current
+    OutlinedButton(onClick={val now=Calendar.getInstance();DatePickerDialog(context,{_,year,month,day->TimePickerDialog(context,{_,hour,minute->onValue(String.format(Locale.US,"%04d-%02d-%02d %02d:%02d",year,month+1,day,hour,minute))},now.get(Calendar.HOUR_OF_DAY),now.get(Calendar.MINUTE),false).show()},now.get(Calendar.YEAR),now.get(Calendar.MONTH),now.get(Calendar.DAY_OF_MONTH)).show()},modifier=Modifier.fillMaxWidth().height(56.dp),shape=RoundedCornerShape(4.dp)){Text(if(value.isBlank())label else value,modifier=Modifier.weight(1f),maxLines=1);Text("▣")}
+}
 @Composable private fun ToggleRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) { Row(Modifier.fillMaxWidth().border(1.dp, Color(0xFFE3E3E3), RoundedCornerShape(5.dp)).padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Text(label, modifier = Modifier.weight(1f)); Switch(checked, onChecked, colors = SwitchDefaults.colors(checkedTrackColor = ActionTeal)) } }
 @Composable private fun Avatar(name: String, size: Int = 72) { Box(Modifier.size(size.dp).clip(CircleShape).background(ActionTeal), contentAlignment = Alignment.Center) { Text(name.split(' ').mapNotNull { it.firstOrNull() }.take(2).joinToString(""), color = Color.White, fontSize = (size / 3).sp, fontWeight = FontWeight.Bold) } }
 @Composable private fun RoleBadge(text: String) { Text(text.lowercase().replaceFirstChar { it.uppercase() }, color = ActionTeal, fontSize = 11.sp, modifier = Modifier.border(1.dp, ActionTeal, RoundedCornerShape(10.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) }

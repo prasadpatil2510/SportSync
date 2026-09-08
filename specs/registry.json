@@ -77,6 +77,13 @@
       "status": "verified",
       "path": "specs/features/MATCH-010-batter-controls-and-chase-context.md",
       "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
+    },
+    {
+      "id": "MATCH-011",
+      "title": "Home data and date pickers",
+      "status": "verified",
+      "path": "specs/features/MATCH-011-home-data-and-date-pickers.md",
+      "implementation": ["worker/src/index.js", "android/app/src/main/java/club/nmtcc/cricket"]
     }
   ]
 }

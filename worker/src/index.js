@@ -68,6 +68,19 @@ async function finishMatch(env, match, current) {
 
 const clean = value => String(value || "").trim();
 
+export function validDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(clean(value));
+  if (!match) return false;
+  const [, year, month, day] = match.map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
+export function validDateTime(value) {
+  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})$/.exec(clean(value));
+  return Boolean(match && validDate(match[1]) && Number(match[2]) < 24 && Number(match[3]) < 60);
+}
+
 async function fetchAuctionJson(env, path) {
   const base = clean(env.AUCTION_API_BASE_URL).replace(/\/+$/, "");
   if (!base) throw new Error("Auction integration is not configured");
@@ -201,7 +214,10 @@ async function route(request, env) {
   }
 
   if (path === "/api/tournaments" && request.method === "GET") return reply(await list(env, "tournaments"));
-  if (path === "/api/teams" && request.method === "GET") return reply(await list(env, "teams"));
+  if (path === "/api/teams" && request.method === "GET") {
+    const result = await env.DB.prepare("SELECT * FROM teams WHERE is_active=1 ORDER BY name").all();
+    return reply(result.results);
+  }
   if (path === "/api/players" && request.method === "GET") return reply(await list(env, "players"));
 
   if (path === "/api/integrations/auction/status" && request.method === "GET") {
@@ -241,11 +257,20 @@ async function route(request, env) {
     return reply(result.results);
   }
 
+  if (path === "/api/matches" && request.method === "GET") {
+    const result = await env.DB.prepare(`SELECT m.*,a.name team_a_name,b.name team_b_name
+      FROM matches m JOIN teams a ON a.id=m.team_a_id JOIN teams b ON b.id=m.team_b_id
+      ORDER BY CASE m.status WHEN 'LIVE' THEN 0 WHEN 'PAUSED' THEN 1 WHEN 'SCHEDULED' THEN 2 ELSE 3 END,
+      COALESCE(NULLIF(m.scheduled_at,''),m.created_at) DESC,m.created_at DESC`).all();
+    return reply(result.results);
+  }
+
   if (path === "/api/matches" && request.method === "POST") {
     if (!requireAdmin(request, env)) return fail("Admin access required", 401);
     const input = await body(request);
     if (!input.tournamentId || !input.teamAId || !input.teamBId) return fail("Tournament and two teams are required");
     if (input.teamAId === input.teamBId) return fail("Select two different teams");
+    if (!validDateTime(input.scheduledAt)) return fail("Select a valid match date and time");
     const id = makeId("match");
     await env.DB.prepare(`INSERT INTO matches(id,tournament_id,round_name,team_a_id,team_b_id,scheduled_at,ground,overs_per_innings)
       VALUES(?,?,?,?,?,?,?,?)`).bind(id,input.tournamentId,clean(input.roundName)||"League Match",input.teamAId,input.teamBId,
@@ -453,6 +478,8 @@ async function route(request, env) {
     if (!requireAdmin(request, env)) return fail("Admin access required", 401);
     const input = await body(request);
     if (!String(input.name || "").trim()) return fail("Tournament name is required");
+    if (!validDate(input.startDate) || !validDate(input.endDate)) return fail("Select valid tournament dates");
+    if (clean(input.endDate) < clean(input.startDate)) return fail("End date cannot be before start date");
     const item = {
       id: makeId("tournament"), name: clean(input.name), format: input.format || "ROUND_ROBIN",
       overs: Math.max(1, Number(input.oversPerInnings) || 20), city: clean(input.city), ground: clean(input.ground),
