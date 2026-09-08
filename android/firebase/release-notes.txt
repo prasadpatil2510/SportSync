@@ -1,7 +1,8 @@
-SportSync Cricket - version 0.10.0.
+SportSync Cricket - version 0.10.1.
 
 - Added Start a Match and Schedule Matches actions for empty tournaments
 - Added logo-based team dropdowns to manual match setup
-- Added exact auction ID, name, or link import for tournament squads
+- Added a newest-first auction dropdown that imports the selected squads
+- Moved Teams before Matches in the tournament view
 - Added single league, double league, and knockout-opening auto schedules
 - Added a live points table with points and net run rate

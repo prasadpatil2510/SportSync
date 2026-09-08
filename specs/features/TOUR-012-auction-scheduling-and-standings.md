@@ -10,7 +10,7 @@ Let an organiser import the exact auction into a tournament, create manual or st
 
 - An empty tournament offers **Start a match** and **Schedule matches**.
 - Manual match setup selects both teams from compact dropdowns that include team logos.
-- Auction import accepts an auction ID, exact auction name, or auction link. The resolved auction must be the auction currently active in the auction application so the wrong squads cannot be imported.
+- Auction import presents all available auctions newest-first. Selecting one imports that auction's teams and players without requiring it to be the currently active auction.
 - Automatic scheduling supports single round robin, double round robin, and a knockout opening round. Round-robin fixtures use the circle method and support an odd number of teams with a bye.
 - League standings award 2 points for a win and 1 point for a tie/no-result, then rank by points, net run rate, wins, and team name.
 - Net run rate uses aggregate innings runs and legal balls; an all-out innings uses the scheduled full quota when calculating its rate.

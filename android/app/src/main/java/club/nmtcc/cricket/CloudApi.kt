@@ -20,6 +20,7 @@ data class BatterStat(val id:String,val name:String,val runs:Int,val balls:Int,v
 data class BowlerStat(val id:String,val name:String,val legalBalls:Int,val runs:Int,val wickets:Int,val maidens:Int=0)
 data class Scorecard(val batters:List<BatterStat>,val bowlers:List<BowlerStat>)
 data class AuctionRefreshResult(val teamsCreated:Int,val teamsUpdated:Int,val playersCreated:Int,val playersUpdated:Int,val membershipsAdded:Int)
+data class AuctionOption(val id:String,val name:String,val createdAt:String,val playerCount:Int,val soldCount:Int)
 data class ScheduleDraft(val tournamentId:String,val format:String,val teamIds:Set<String>,val startDateTime:String,val intervalMinutes:Int,val ground:String,val overs:Int)
 data class ScheduleResult(val matchesCreated:Int,val rounds:Int)
 data class PointRow(val teamId:String,val teamName:String,val logoUrl:String?,val played:Int,val won:Int,val lost:Int,val tied:Int,val noResult:Int,val points:Int,val nrr:Double)
@@ -72,6 +73,7 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
         return JSONObject(request("/api/teams/$teamId", "PUT", json)).toTeam()
     }
     fun players(): List<Player> = JSONArray(request("/api/players")).objects().map { it.toPlayer() }
+    fun auctions():List<AuctionOption> = JSONArray(request("/api/integrations/auction/auctions")).objects().map{AuctionOption(it.string("id"),it.string("name"),it.string("createdAt"),it.optInt("playerCount"),it.optInt("soldCount"))}
     fun refreshAuctionData(tournamentId: String, auctionReference:String): AuctionRefreshResult {
         val value = JSONObject(request("/api/integrations/auction/refresh", "POST", JSONObject().put("tournamentId", tournamentId).put("auctionReference",auctionReference)))
         return AuctionRefreshResult(value.optInt("teamsCreated"), value.optInt("teamsUpdated"), value.optInt("playersCreated"), value.optInt("playersUpdated"), value.optInt("membershipsAdded"))

@@ -241,24 +241,20 @@ private fun CreateTournamentScreen(api: CloudApi, onBack: () -> Unit, onCreated:
 @Composable
 private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int, onBack: () -> Unit, onAddTeam: () -> Unit, onTeam: (Team) -> Unit, onNewMatch: () -> Unit, onSchedule:()->Unit, onMatch: (CricketMatch) -> Unit) {
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf("Matches") }; var teams by remember { mutableStateOf(emptyList<Team>()) }; var matches by remember { mutableStateOf(emptyList<CricketMatch>()) }; var loading by remember { mutableStateOf(true) }
-    var importing by remember { mutableStateOf(false) }; var importMessage by remember { mutableStateOf<String?>(null) }; var localRefresh by remember { mutableIntStateOf(0) };var auctionReference by remember{mutableStateOf(tournament.auctionReference)};var points by remember{mutableStateOf(emptyList<PointRow>())}
+    var tab by remember { mutableStateOf("Teams") }; var teams by remember { mutableStateOf(emptyList<Team>()) }; var matches by remember { mutableStateOf(emptyList<CricketMatch>()) }; var loading by remember { mutableStateOf(true) }
+    var importing by remember { mutableStateOf(false) }; var importMessage by remember { mutableStateOf<String?>(null) }; var localRefresh by remember { mutableIntStateOf(0) };var auctionReference by remember{mutableStateOf(tournament.auctionReference)};var points by remember{mutableStateOf(emptyList<PointRow>())};var auctions by remember{mutableStateOf(emptyList<AuctionOption>())}
     LaunchedEffect(tournament.id, refresh, localRefresh,tab) { loading = true; val result=runCatching { withContext(Dispatchers.IO) { Triple(api.tournamentTeams(tournament.id),api.tournamentMatches(tournament.id),api.pointsTable(tournament.id)) } }; result.onSuccess { teams=it.first; matches=it.second;points=it.third }; loading = false }
+    LaunchedEffect(tournament.id){auctions=runCatching{withContext(Dispatchers.IO){api.auctions()}}.onFailure{importMessage=it.message}.getOrDefault(emptyList())}
     Column(Modifier.fillMaxSize()) {
         AppHeader(tournament.name, onBack = onBack)
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface), horizontalArrangement = Arrangement.SpaceAround) {
-            listOf("Matches", "Teams", "Points Table", "Leaderboard").forEach { item -> Column(Modifier.clickable { tab = item }.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(item, fontWeight = if (tab == item) FontWeight.Bold else FontWeight.Normal); if (tab == item) Box(Modifier.padding(top = 10.dp).height(3.dp).width(70.dp).background(AppRed)) } }
+            listOf("Teams", "Matches", "Points Table", "Leaderboard").forEach { item -> Column(Modifier.clickable { tab = item }.padding(vertical = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(item, fontWeight = if (tab == item) FontWeight.Bold else FontWeight.Normal); if (tab == item) Box(Modifier.padding(top = 10.dp).height(3.dp).width(70.dp).background(AppRed)) } }
         }
         Surface(color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                OutlinedTextField(auctionReference,{auctionReference=it},label={Text("Auction ID, exact name, or link")},singleLine=true,modifier=Modifier.fillMaxWidth())
-                OutlinedButton(onClick = {
-                    if(auctionReference.isBlank()){importMessage="Enter the auction ID, exact name, or link";return@OutlinedButton}
-                    importing = true; importMessage = null
-                    scope.launch { runCatching { withContext(Dispatchers.IO) { api.refreshAuctionData(tournament.id,auctionReference) } }
+                AuctionDropdown(auctions,auctionReference,importing){selected->auctionReference=selected;importing=true;importMessage=null;scope.launch { runCatching { withContext(Dispatchers.IO) { api.refreshAuctionData(tournament.id,selected) } }
                         .onSuccess { result -> importMessage = "Auction refreshed: ${result.teamsCreated} new teams, ${result.playersCreated} new players, ${result.membershipsAdded} squad links"; localRefresh++ }
-                        .onFailure { importMessage = it.message ?: "Auction refresh failed" }; importing = false }
-                }, enabled = !importing, modifier = Modifier.fillMaxWidth()) { Text(if (importing) "REFRESHING AUCTION DATA…" else "↻  REFRESH AUCTION DATA") }
+                        .onFailure { importMessage = it.message ?: "Auction refresh failed" }; importing = false }}
                 if (importMessage != null) Text(importMessage!!, color = if (importMessage!!.startsWith("Auction refreshed")) ActionTeal else MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
@@ -275,6 +271,9 @@ private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int
         }
     }
 }
+
+@Composable
+private fun AuctionDropdown(auctions:List<AuctionOption>,selected:String,loading:Boolean,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};val auction=auctions.firstOrNull{it.id==selected};OutlinedButton(onClick={open=true},enabled=!loading&&auctions.isNotEmpty(),modifier=Modifier.fillMaxWidth()){Text(if(loading)"IMPORTING AUCTION…" else auction?.name?:if(auctions.isEmpty())"LOADING AUCTIONS…" else "SELECT AUCTION",modifier=Modifier.weight(1f));Text("⌄")};DropdownMenu(open,{open=false},modifier=Modifier.fillMaxWidth(.9f)){auctions.forEach{item->DropdownMenuItem(text={Column{Text(item.name,fontWeight=FontWeight.SemiBold);Text("${item.playerCount} players • ${item.createdAt.take(10)}",fontSize=12.sp,color=Muted)}},onClick={open=false;onSelect(item.id)})}}}
 
 @Composable
 private fun TeamCard(team: Team, onClick: () -> Unit) {

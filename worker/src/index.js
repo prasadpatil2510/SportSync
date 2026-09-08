@@ -99,8 +99,6 @@ async function resolveAuction(env, reference) {
   const urlPart = requested.split(/[/?#]/).filter(Boolean).at(-1);
   const found = auctions.find(item => clean(item.id) === requested || clean(item.id) === urlPart || normalizedName(item.name) === normalizedName(requested));
   if (!found) throw new Error("Auction not found. Check the exact ID, name, or link");
-  const activeId = clean(catalog.activeId || catalog.activeAuctionId);
-  if (activeId && clean(found.id) !== activeId) throw new Error(`Make “${clean(found.name)}” active in the auctioneer website, then import again`);
   return found;
 }
 
@@ -112,7 +110,7 @@ async function refreshAuctionData(env, tournamentId, auctionReference) {
   try {
     const auction = await resolveAuction(env, auctionReference);
     const [stateResult, registrationResult] = await Promise.all([
-      fetchAuctionJson(env, "state"), fetchAuctionJson(env, "player-registrations")
+      fetchAuctionJson(env, `auctions/${encodeURIComponent(auction.id)}/integration`), fetchAuctionJson(env, "player-registrations")
     ]);
     const state = stateResult.value;
     const registrations = registrationResult.value;
@@ -241,6 +239,13 @@ async function route(request, env) {
     if (!requireAdmin(request, env)) return fail("Admin access required", 401);
     const latest = await env.DB.prepare("SELECT * FROM import_runs WHERE source='AUCTION' ORDER BY started_at DESC LIMIT 1").first();
     return reply({ configured: Boolean(clean(env.AUCTION_API_BASE_URL)), latest: latest || null });
+  }
+
+  if (path === "/api/integrations/auction/auctions" && request.method === "GET") {
+    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    const catalog = (await fetchAuctionJson(env, "auctions")).value;
+    const auctions = (Array.isArray(catalog) ? catalog : catalog.auctions || []).sort((a,b) => clean(b.createdAt).localeCompare(clean(a.createdAt)));
+    return reply(auctions);
   }
 
   if (path === "/api/integrations/auction/refresh" && request.method === "POST") {
