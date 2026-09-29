@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.17.0 testing beta.
+SportSync Cricket - version 0.18.0 testing beta.
+
+- Added a hamburger menu with Matches, Tournaments, Teams and Stats links
+- Added an offline Overlay Preview that does not start camera or YouTube
+- Preview includes score, active batters, bowler and current-over ball history
+- Added a reserved controls panel for the upcoming overlay controls
 
 - Generated broadcast PIN is now shown clearly and saved into the Broadcast screen
 - Camera and microphone encoders are prepared before preview, preventing a blank camera screen

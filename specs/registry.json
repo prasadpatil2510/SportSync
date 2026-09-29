@@ -133,6 +133,13 @@
       "status": "draft",
       "path": "specs/features/AUTH-018-sms-assisted-player-registration.md",
       "implementation": ["docs/PRODUCT_BACKLOG.md"]
+    },
+    {
+      "id": "LIVE-019",
+      "title": "Offline overlay preview and navigation drawer",
+      "status": "implemented",
+      "path": "specs/features/LIVE-019-overlay-preview-and-navigation.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt", "android/app/src/main/java/club/nmtcc/cricket/OverlayPreviewScreen.kt"]
     }
   ]
 }

@@ -70,7 +70,7 @@ private val Page: Color @Composable get() = LocalBrandPalette.current.page
 private val Ink: Color @Composable get() = LocalBrandPalette.current.ink
 private val Muted: Color @Composable get() = LocalBrandPalette.current.muted
 
-private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, SCHEDULE_MATCHES, LINEUP, LIVE_LINEUP, TOSS, SCORE, USERS, BROADCAST }
+private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, SCHEDULE_MATCHES, LINEUP, LIVE_LINEUP, TOSS, SCORE, USERS, BROADCAST, OVERLAY_PREVIEW }
 
 @Composable
 fun NmtccApp() {
@@ -120,7 +120,7 @@ fun NmtccApp() {
         var refresh by remember { mutableIntStateOf(0) }
         Surface(Modifier.fillMaxSize(), color = Page) {
             when (screen) {
-                Screen.HOME -> TournamentListScreen(api, refresh, currentSession.user, canManage, showSessionControls = !BuildConfig.TEST_AUTH_BYPASS, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onUsers = { screen = Screen.USERS }, onBroadcast = { screen = Screen.BROADCAST }, onLogout = { runCatching { api.logout() }; preferences.edit().remove("auth-token").apply(); session = null }, onOpen = { tournament = it; returnHome=false; screen = Screen.TOURNAMENT }, onTeam = { team=it; returnHome=true; screen=Screen.TEAM }, onMatch = { cricketMatch=it; returnHome=true; screen=if(it.status=="SCHEDULED"&&canScore)Screen.LINEUP else Screen.SCORE })
+                Screen.HOME -> TournamentListScreen(api, refresh, currentSession.user, canManage, showSessionControls = !BuildConfig.TEST_AUTH_BYPASS, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onUsers = { screen = Screen.USERS }, onBroadcast = { screen = Screen.BROADCAST }, onOverlay = { screen = Screen.OVERLAY_PREVIEW }, onLogout = { runCatching { api.logout() }; preferences.edit().remove("auth-token").apply(); session = null }, onOpen = { tournament = it; returnHome=false; screen = Screen.TOURNAMENT }, onTeam = { team=it; returnHome=true; screen=Screen.TEAM }, onMatch = { cricketMatch=it; returnHome=true; screen=if(it.status=="SCHEDULED"&&canScore)Screen.LINEUP else Screen.SCORE })
                 Screen.CREATE_TOURNAMENT -> CreateTournamentScreen(api, onBack = { screen = Screen.HOME }, onCreated = { tournament = it; refresh++; screen = Screen.TOURNAMENT })
                 Screen.TOURNAMENT -> TournamentScreen(api, tournament!!, refresh, canManage, canScore, onBack = { refresh++; screen = Screen.HOME }, onAddTeam = { screen = Screen.ADD_TEAM }, onTeam = { team = it; returnHome=false; screen = Screen.TEAM }, onNewMatch = { screen = Screen.CREATE_MATCH }, onSchedule = { screen=Screen.SCHEDULE_MATCHES }, onMatch = { cricketMatch = it; returnHome=false; screen = if (it.status == "SCHEDULED"&&canScore) Screen.LINEUP else Screen.SCORE })
                 Screen.ADD_TEAM -> AddTeamScreen(api, tournament!!, onBack = { screen = Screen.TOURNAMENT }, onCreated = { refresh++; screen = Screen.TOURNAMENT })
@@ -136,6 +136,7 @@ fun NmtccApp() {
                 Screen.SCORE -> ScoringScreen(api, cricketMatch!!, canScore = canScore, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onUpdated = { cricketMatch = it })
                 Screen.USERS -> UserManagementScreen(api, onBack = { screen = Screen.HOME })
                 Screen.BROADCAST -> BroadcastScreen(onBack = { screen = Screen.HOME })
+                Screen.OVERLAY_PREVIEW -> OverlayPreviewScreen(api, onBack = { screen = Screen.HOME })
             }
         }
     }
@@ -206,8 +207,9 @@ private fun AppHeader(title: String, back: Boolean = true, onBack: () -> Unit = 
 }
 
 @Composable
-private fun TournamentListScreen(api: CloudApi, refresh: Int, user:AppUser, canManage:Boolean, showSessionControls:Boolean, onCreate: () -> Unit, onUsers:()->Unit, onBroadcast:()->Unit, onLogout:()->Unit, onOpen: (Tournament) -> Unit, onTeam:(Team)->Unit, onMatch:(CricketMatch)->Unit) {
+private fun TournamentListScreen(api: CloudApi, refresh: Int, user:AppUser, canManage:Boolean, showSessionControls:Boolean, onCreate: () -> Unit, onUsers:()->Unit, onBroadcast:()->Unit, onOverlay:()->Unit, onLogout:()->Unit, onOpen: (Tournament) -> Unit, onTeam:(Team)->Unit, onMatch:(CricketMatch)->Unit) {
     val scope = rememberCoroutineScope()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var tournaments by remember { mutableStateOf(emptyList<Tournament>()) }
@@ -219,8 +221,8 @@ private fun TournamentListScreen(api: CloudApi, refresh: Int, user:AppUser, canM
         runCatching { withContext(Dispatchers.IO) { Triple(api.tournaments(),api.matches(),api.teams()) } }.onSuccess { tournaments=it.first;matches=it.second;teams=it.third;error=null }.onFailure { error = it.message }
         loading = false
     }
-    Column(Modifier.fillMaxSize()) {
-        AppHeader("SportSync Cricket", back = false)
+    ModalNavigationDrawer(drawerState=drawerState,drawerContent={ModalDrawerSheet(Modifier.width(290.dp)){Text("SportSync Cricket",fontSize=22.sp,fontWeight=FontWeight.Black,modifier=Modifier.padding(20.dp));HorizontalDivider();listOf("Matches","Tournaments","Teams","Stats").forEach{destination->NavigationDrawerItem(label={Text(destination)},selected=tab==destination,onClick={tab=destination;scope.launch{drawerState.close()}},modifier=Modifier.padding(horizontal=10.dp))};HorizontalDivider(Modifier.padding(vertical=8.dp));NavigationDrawerItem(label={Text("Overlay preview")},selected=false,onClick={scope.launch{drawerState.close()};onOverlay()},modifier=Modifier.padding(horizontal=10.dp));NavigationDrawerItem(label={Text("Broadcast")},selected=false,onClick={scope.launch{drawerState.close()};onBroadcast()},modifier=Modifier.padding(horizontal=10.dp));if(canManage&&showSessionControls)NavigationDrawerItem(label={Text("Users")},selected=false,onClick={scope.launch{drawerState.close()};onUsers()},modifier=Modifier.padding(horizontal=10.dp));if(showSessionControls)NavigationDrawerItem(label={Text("Sign out")},selected=false,onClick={scope.launch{drawerState.close()};onLogout()},modifier=Modifier.padding(horizontal=10.dp))}}){Column(Modifier.fillMaxSize()) {
+        Surface(color=MaterialTheme.colorScheme.primary){Row(Modifier.fillMaxWidth().height(62.dp).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){IconButton(onClick={scope.launch{drawerState.open()}}){Text("☰",color=MaterialTheme.colorScheme.onPrimary,fontSize=26.sp)};Text("SportSync Cricket",color=MaterialTheme.colorScheme.onPrimary,fontSize=21.sp,fontWeight=FontWeight.Bold)}}
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){if(showSessionControls)Column(Modifier.weight(1f)){Text(user.displayName,fontWeight=FontWeight.SemiBold);Text(user.role.name.replace('_',' ').lowercase().replaceFirstChar{it.uppercase()},fontSize=11.sp,color=ActionTeal)}else Spacer(Modifier.weight(1f));TextButton(onClick=onBroadcast){Text("BROADCAST")};if(canManage&&showSessionControls)TextButton(onClick=onUsers){Text("USERS")};if(showSessionControls)TextButton(onClick=onLogout){Text("SIGN OUT")}}
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(14.dp), horizontalArrangement = Arrangement.SpaceAround) {
             listOf("Matches", "Tournaments", "Teams", "Stats").forEach { item->Text(item, color = if (item == tab) AppRed else Ink, fontWeight = if (item == tab) FontWeight.Bold else FontWeight.Normal,modifier=Modifier.clickable{tab=item}.padding(6.dp)) }
@@ -238,7 +240,7 @@ private fun TournamentListScreen(api: CloudApi, refresh: Int, user:AppUser, canM
             "Stats"->EmptyState("Stats","Tournament and player statistics will appear here.","VIEW MATCHES"){tab="Matches"}
             else->if(tournaments.isEmpty())EmptyState("No tournaments yet","Create your first tournament to add teams and begin scheduling.","CREATE TOURNAMENT",onCreate)else LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){items(tournaments,key={it.id}){item->TournamentCard(item){onOpen(item)}}}
         }
-    }
+    }}
 }
 
 @Composable
