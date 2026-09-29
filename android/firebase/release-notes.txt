@@ -1,4 +1,10 @@
-SportSync Cricket - version 0.19.0 testing beta.
+SportSync Cricket - version 0.20.0 testing beta.
+
+- Recreated the overlay using the supplied capsule scorebar reference
+- Batting team logo is shown on the left and bowling team logo on the right
+- Lifted the complete scorebar above the bottom edge
+- Kept batters left, score and overs centered, and bowler plus current over on the right
+- Treats the 10% height target as a compactness guideline for better readability
 
 - Rebuilt the overlay as a compact linear cricket scorebar
 - Reduced overlay height to approximately 10% of the video frame
