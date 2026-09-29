@@ -136,13 +136,13 @@ private fun BroadcastPreview(match: CricketMatch?, scorecard: Scorecard, deliver
             val nonStriker = scorecard.batters.find { it.id == innings.nonStrikerId }
             val bowler = scorecard.bowlers.find { it.id == innings.bowlerId } ?: scorecard.bowlers.lastOrNull()
             val currentOver = currentOver(deliveries)
-            Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).fillMaxWidth(.97f).fillMaxHeight(.16f), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp).fillMaxWidth(.97f).fillMaxHeight(.21f), verticalAlignment = Alignment.CenterVertically) {
                 TeamLogo(battingLogo, battingTeam, Modifier.fillMaxHeight().aspectRatio(1f))
-                Surface(color = Color(0xFFF2F2F2), shape = RoundedCornerShape(50), modifier = Modifier.weight(1f).fillMaxHeight(.78f)) {
+                Surface(color = Color(0xFFF2F2F2), shape = RoundedCornerShape(50), modifier = Modifier.weight(1f).fillMaxHeight(.82f)) {
                     Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1.15f).padding(start = 9.dp), verticalArrangement = Arrangement.Center) {
-                            Text("🏏 ${striker?.name?.firstName() ?: innings.strikerName.firstName()}   ${striker?.runs ?: 0} (${striker?.balls ?: 0})", color = Color(0xFF0A173A), fontSize = 7.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("     ${nonStriker?.name?.firstName() ?: innings.nonStrikerName.firstName()}   ${nonStriker?.runs ?: 0} (${nonStriker?.balls ?: 0})", color = Color(0xFF0A173A), fontSize = 7.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("🏏 ${striker?.name?.firstName() ?: innings.strikerName.firstName()}   ${striker?.runs ?: 0} (${striker?.balls ?: 0})", color = Color(0xFF0A173A), fontSize = 6.5.sp, lineHeight = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("     ${nonStriker?.name?.firstName() ?: innings.nonStrikerName.firstName()}   ${nonStriker?.runs ?: 0} (${nonStriker?.balls ?: 0})", color = Color(0xFF0A173A), fontSize = 6.5.sp, lineHeight = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Surface(color = Color(0xFF091F62), shape = RoundedCornerShape(50), modifier = Modifier.weight(1.05f).fillMaxHeight()) {
                             Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
@@ -154,8 +154,8 @@ private fun BroadcastPreview(match: CricketMatch?, scorecard: Scorecard, deliver
                             }
                         }
                         Column(Modifier.weight(1.35f).padding(horizontal = 9.dp), verticalArrangement = Arrangement.Center) {
-                            Text("${bowler?.name?.firstName() ?: innings.bowlerName.firstName()}   ${bowler?.wickets ?: 0}-${bowler?.runs ?: 0}  ${bowler?.legalBalls?.div(6) ?: 0}.${bowler?.legalBalls?.rem(6) ?: 0}", color = Color(0xFF0A173A), fontSize = 7.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (currentOver.isEmpty()) "THIS OVER  —" else "THIS OVER  ${currentOver.joinToString(", ") { ballLabel(it) }}", color = Color(0xFF0A173A), fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${bowler?.name?.firstName() ?: innings.bowlerName.firstName()}   ${bowler?.wickets ?: 0}-${bowler?.runs ?: 0}  ${bowler?.legalBalls?.div(6) ?: 0}.${bowler?.legalBalls?.rem(6) ?: 0}", color = Color(0xFF0A173A), fontSize = 6.5.sp, lineHeight = 8.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (currentOver.isEmpty()) "THIS OVER  —" else "THIS OVER  ${currentOver.joinToString(", ") { ballLabel(it) }}", color = Color(0xFF0A173A), fontSize = 6.5.sp, lineHeight = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }

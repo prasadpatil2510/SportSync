@@ -21,9 +21,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.gl.render.filters.`object`.TextFilterRender
-import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
-import com.pedro.encoder.input.sources.video.Camera2Source
 import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.rtmp.RtmpStream
 import com.pedro.library.view.OpenGlView
@@ -66,7 +64,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     } }
     val stream = remember(blankTest) {
         if (blankTest) RtmpStream(context, checker, NoVideoSource(), SilenceAudioSource())
-        else RtmpStream(context, checker, Camera2Source(context), MicrophoneSource())
+        else RtmpStream(context, checker)
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         message = if (result.values.all { it }) "Camera and microphone ready" else "Camera and microphone permissions are required"

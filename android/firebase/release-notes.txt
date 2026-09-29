@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.20.0 testing beta.
+SportSync Cricket - version 0.21.0 testing beta.
+
+- Expanded the reference scorebar into a reliable two-line layout
+- Non-striker and current-over sequence now remain visible
+- Switched live mode to the streaming library's standard phone camera and microphone source
+- Preserved prepare-before-preview sequencing for live camera stability
 
 - Recreated the overlay using the supplied capsule scorebar reference
 - Batting team logo is shown on the left and bowling team logo on the right

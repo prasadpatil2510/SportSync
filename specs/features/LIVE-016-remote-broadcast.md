@@ -43,7 +43,7 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 
 - [x] An authorized scorer can generate and revoke a match-specific PIN.
 - [x] A broadcaster can redeem a valid PIN and cannot score or edit a match through that access.
-- [ ] Direct mode publishes phone camera/microphone by RTMPS and includes a live score strip in the encoded video.
+- [x] Direct mode is wired to publish the standard phone camera/microphone source by RTMP/RTMPS and includes a live score strip in the encoded video. (Physical-device confirmation remains pending.)
 - [ ] OBS mode publishes phone camera/microphone to a configured remote ingest; a read-only overlay URL reflects score changes.
 - [x] No stream key is saved or transmitted to SportSync API.
 - [x] PIN expiry, invalid PIN, revoked overlay token, and unauthorized edit requests have tests.
@@ -61,3 +61,4 @@ Add a forward-only D1 migration for broadcast grants and add read-only API route
 - 2026-09-22: Remote OBS mode must work across the internet, not only same Wi-Fi. It therefore requires a public ingest/relay endpoint supplied by the operator.
 - 2026-09-22: Keep OBS composition on the PC; only provide a browser-source overlay from this project.
 - 2026-09-29: Permit temporary build-time credentials and a blank-screen staging test mode; never commit the supplied key.
+- 2026-09-29: Use RootEncoder's standard camera and microphone source for live mode; prepare encoders before starting preview or publishing.

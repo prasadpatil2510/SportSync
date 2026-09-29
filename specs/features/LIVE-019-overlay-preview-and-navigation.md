@@ -13,6 +13,7 @@ Let a scorer inspect the complete broadcast overlay without starting a YouTube b
 - Overlay Preview uses a small local five-second looping motion scene so testing does not consume network data or require a stream key.
 - The preview renders a compact, linear lower-third score strip using approximately 10% of the 16:9 frame height as a guideline while preserving readability.
 - The strip shows the batting score, explicitly labelled striker and non-striker, current bowler and comma-separated current-over history.
+- The reference layout may use two compact text lines so the non-striker and current-over sequence are never clipped.
 - The batting-team logo anchors the left edge, the bowling-team logo anchors the right edge, and the scorebar is lifted slightly above the bottom frame edge.
 - A reserved controls area is included for future overlay controls.
 - Camera access changes are excluded from this change.
@@ -36,6 +37,7 @@ Let a scorer inspect the complete broadcast overlay without starting a YouTube b
 - [x] Overlay Preview opens from the drawer without camera or broadcast permission.
 - [x] The preview has a looping local motion background and a compact linear lower-third lifted above the frame edge.
 - [x] The overlay shows team score, striker with a bat marker, non-striker, current bowler and comma-separated chronological current-over balls.
+- [x] Both batter rows and the current-over row remain visible in the preview at phone-landscape dimensions.
 - [x] The batting and bowling team logos appear on the left and right ends respectively when logo data is available.
 - [x] A visible controls area is present without claiming unfinished controls work.
 
