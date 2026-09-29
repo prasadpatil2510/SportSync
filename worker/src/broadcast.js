@@ -47,7 +47,11 @@ export function publicBroadcastSnapshot(match) {
     legalBalls: innings?.legal_balls ?? 0,
     oversLimit: match.overs_per_innings,
     striker: innings?.striker_name ?? "",
+    strikerRuns: Number(innings?.striker_runs ?? 0),
+    strikerBalls: Number(innings?.striker_balls ?? 0),
     nonStriker: innings?.non_striker_name ?? "",
+    nonStrikerRuns: Number(innings?.non_striker_runs ?? 0),
+    nonStrikerBalls: Number(innings?.non_striker_balls ?? 0),
     bowler: innings?.bowler_name ?? "",
     result: match.result_text ?? "",
     updatedAt: innings?.updated_at ?? match.updated_at

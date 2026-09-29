@@ -79,7 +79,11 @@ async function matchView(env, matchId) {
     LEFT JOIN teams tw ON tw.id=m.toss_winner_id LEFT JOIN teams bt ON bt.id=m.batting_team_id
     LEFT JOIN teams bw ON bw.id=m.bowling_team_id WHERE m.id=?`).bind(matchId).first();
   if (!match) return null;
-  const innings = await env.DB.prepare(`SELECT i.*,s.name striker_name,n.name non_striker_name,b.name bowler_name
+  const innings = await env.DB.prepare(`SELECT i.*,s.name striker_name,n.name non_striker_name,b.name bowler_name,
+    (SELECT COALESCE(SUM(d.batter_runs),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.striker_id AND d.is_void=0) striker_runs,
+    (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.striker_id AND d.is_void=0) striker_balls,
+    (SELECT COALESCE(SUM(d.batter_runs),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.non_striker_id AND d.is_void=0) non_striker_runs,
+    (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.non_striker_id AND d.is_void=0) non_striker_balls
     FROM innings i LEFT JOIN players s ON s.id=i.striker_id LEFT JOIN players n ON n.id=i.non_striker_id
     LEFT JOIN players b ON b.id=i.bowler_id WHERE i.match_id=? ORDER BY i.innings_number`).bind(matchId).all();
   return { ...match, innings: innings.results };

@@ -24,9 +24,10 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - Only the Broadcast screen locks the activity to sensor-landscape. Leaving it restores the activity's prior orientation policy.
 - MainActivity handles screen-size/orientation configuration changes in place so entering landscape does not discard the current Broadcast session; navigation state is also saveable for ordinary activity recreation.
 - Overlay geometry is expressed as percentages of the fixed 1920×1080 composition and stays inside three-percent safe margins; physical display size affects only how the composed frame is scaled for preview.
-- The landscape scorebar is a slim two-line strip. It shows the striker with a bat icon, the non-striker name without a role label, both team logos, score/overs, bowler/current over, and no redundant `STRIKER`/`NON-STRIKER` text.
+- The landscape scorebar is a slim two-line strip. It shows both batters with matching typography and their runs/balls; only the striker has a bat icon. It also shows both team logos, score/overs, bowler/current over, and no redundant `STRIKER`/`NON-STRIKER` text.
 - A transparent NMTCC logo watermark is rendered inside the upper-right safe area of the same master composition.
 - Overlay typography uses reference-canvas pixel sizes rather than device-scaled `sp`, preventing clipping and inconsistent enlargement across phones.
+- Preview can be refreshed whenever its surface is ready; disabled Start and Stop controls are accompanied by the exact missing prerequisite.
 
 ## Rules and invariants
 

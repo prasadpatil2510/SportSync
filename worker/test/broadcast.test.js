@@ -89,10 +89,11 @@ test("broadcast snapshot contains score but no private match or account fields",
     id: "match_1", status: "LIVE", team_a_name: "A", team_a_logo_url: "https://assets.test/a.png", team_b_name: "B", team_b_logo_url: "https://assets.test/b.png",
     batting_team_name: "A", batting_team_logo_url: "https://assets.test/a.png", bowling_team_name: "B", bowling_team_logo_url: "https://assets.test/b.png", current_innings: 1,
     overs_per_innings: 20, updated_at: "2026-09-22", private_note: "secret",
-    innings: [{ runs: 42, wickets: 2, legal_balls: 35, striker_name: "P1", non_striker_name: "P2", bowler_name: "P3" }]
+    innings: [{ runs: 42, wickets: 2, legal_balls: 35, striker_name: "P1", striker_runs: 24, striker_balls: 16, non_striker_name: "P2", non_striker_runs: 10, non_striker_balls: 8, bowler_name: "P3" }]
   });
   assert.deepEqual([result.runs, result.wickets, result.legalBalls], [42, 2, 35]);
   assert.deepEqual([result.battingTeamLogo, result.bowlingTeamLogo], ["https://assets.test/a.png", "https://assets.test/b.png"]);
+  assert.deepEqual([result.strikerRuns, result.strikerBalls, result.nonStrikerRuns, result.nonStrikerBalls], [24, 16, 10, 8]);
   assert.equal("private_note" in result, false);
 });
 

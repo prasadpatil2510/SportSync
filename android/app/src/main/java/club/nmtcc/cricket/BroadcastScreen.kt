@@ -210,19 +210,21 @@ fun BroadcastScreen(onBack: () -> Unit) {
                 }
             }
             if (blankTest || havePermissions) {
+                val canStart = !streaming && serverUrl.isNotBlank() && streamKey.isNotBlank() && snapshot != null
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!blankTest) {
                     Button(onClick = {
                         val view = openGlView
                         if (view == null) { message = "Camera preview is not ready"; return@Button }
                         runCatching {
+                            if (stream.isOnPreview) stream.stopPreview()
                             if (!prepared) prepared = prepareBroadcastPipeline(stream)
                             stream.startPreview(view)
                             preview = true
-                            message = "Camera preview ready"
+                            message = "Camera preview refreshed"
                         }
                             .onFailure { message = it.message ?: "Camera preview failed" }
-                    }, enabled = surfaceReady && !preview && !streaming) { Text(if(surfaceReady) "PREVIEW" else "CAMERA LOADING…") }
+                    }, enabled = surfaceReady && !streaming) { Text(if (!surfaceReady) "CAMERA LOADING…" else if (preview) "REFRESH PREVIEW" else "PREVIEW") }
                     }
                     Button(onClick = {
                         val url = buildStreamUrl(serverUrl, streamKey)
@@ -234,8 +236,21 @@ fun BroadcastScreen(onBack: () -> Unit) {
                             stream.startStream(url)
                             message = "Connecting…"
                         }.onFailure { message = it.message ?: "Broadcast could not start" }
-                    }, enabled = !streaming && serverUrl.isNotBlank() && streamKey.isNotBlank() && snapshot != null) { Text(if (blankTest) "START BLANK TEST" else "START") }
+                    }, enabled = canStart) { Text(if (blankTest) "START BLANK TEST" else "START") }
                     OutlinedButton(onClick = { if (stream.isStreaming) stream.stopStream(); streaming = false }, enabled = streaming) { Text("STOP") }
+                }
+                if (!streaming && !canStart) {
+                    Text(
+                        when {
+                            snapshot == null -> "START is waiting for the live score."
+                            serverUrl.isBlank() -> "Enter the RTMPS server to enable START."
+                            streamKey.isBlank() -> "Enter the YouTube stream key to enable START."
+                            else -> "START will be available when setup is complete."
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else if (!streaming) {
+                    Text("STOP becomes available after the broadcast connects.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -305,6 +320,13 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
         addView(label(primary, 27f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52))
         addView(label(secondary, 21f, AndroidColor.rgb(69, 79, 99)), LinearLayout.LayoutParams(width, 44))
     }
+    fun batterColumn(striker: String, strikerRuns: Int, strikerBalls: Int, nonStriker: String, nonStrikerRuns: Int, nonStrikerBalls: Int, width: Int) = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(18, 0, 18, 0)
+        addView(label("🏏 $striker   $strikerRuns ($strikerBalls)", 27f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52))
+        addView(label("$nonStriker   $nonStrikerRuns ($nonStrikerBalls)", 27f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52))
+    }
     fun teamLogo(bitmap: Bitmap?) = ImageView(context).apply {
         scaleType = ImageView.ScaleType.CENTER_INSIDE
         setPadding(8, 8, 8, 8)
@@ -317,7 +339,7 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
     }
     scorebar.addView(teamLogo(battingLogo), LinearLayout.LayoutParams(96, 112))
     scorebar.addView(
-        column("🏏 ${score.striker.firstName()}", score.nonStriker.firstName(), 520),
+        batterColumn(score.striker.firstName(), score.strikerRuns, score.strikerBalls, score.nonStriker.firstName(), score.nonStrikerRuns, score.nonStrikerBalls, 520),
         LinearLayout.LayoutParams(520, 112)
     )
     scorebar.addView(LinearLayout(context).apply {
@@ -343,7 +365,7 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
         addView(ImageView(context).apply {
             setImageResource(R.drawable.nmtcc_logo_transparent)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
-        }, FrameLayout.LayoutParams(132, 132, Gravity.TOP or Gravity.END).apply {
+        }, FrameLayout.LayoutParams(198, 198, Gravity.TOP or Gravity.END).apply {
             topMargin = 42
             rightMargin = 54
         })

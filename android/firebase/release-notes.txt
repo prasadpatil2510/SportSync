@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.25.0 testing beta.
+SportSync Cricket - version 0.26.0 testing beta.
+
+- Added runs and balls beside both batter names
+- Matched non-striker typography and color to the striker, without the bat symbol
+- Enlarged the transparent NMTCC broadcast crest by 1.5x
+- Added Refresh Preview and clear explanations for unavailable Start and Stop controls
 
 - Reworked the live scorebar into a slimmer, cleaner 1920x1080 landscape layout
 - Reduced overlay typography and removed striker/non-striker role labels
