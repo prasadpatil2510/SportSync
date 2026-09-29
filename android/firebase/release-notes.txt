@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.15.0 testing beta.
+SportSync Cricket - version 0.16.0 testing beta.
+
+- Fixed broadcast PIN redemption against the deployed testing API
+- Added a blank-screen and silent-audio YouTube ingest test mode
+- Preloaded the temporary testing endpoint in this beta build only
+- Permanent testing PIN 301022 remains available alongside the latest generated PIN
 
 - Added permanent broadcast testing PIN 301022
 - Only the newest generated broadcast PIN remains valid; generating another replaces it immediately

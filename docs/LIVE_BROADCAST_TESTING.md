@@ -12,6 +12,8 @@ Open **BROADCAST** from the Android home screen, redeem the PIN, and choose **Di
 
 Use a private/unlisted test event first. A successful encoder connection does not necessarily mean YouTube is publicly live; YouTube may require **Go Live** in Live Control Room when auto-start is off.
 
+For the staging connectivity check, select **Blank-screen test** and press **START BLANK TEST**. It sends black video with silent audio and does not request camera or microphone permission. Temporary endpoint credentials may be injected into a staging APK at build time through `SPORTSYNC_TEST_BROADCAST_SERVER` and `SPORTSYNC_TEST_BROADCAST_KEY`; they must never be committed, logged, or used for production.
+
 ## Phone B → internet relay → OBS PC
 
 The phone and PC do **not** need to share Wi-Fi. They do need a publicly reachable ingest/relay server. A private LAN address such as `192.168.x.x` will not work across networks. Use an RTMPS endpoint where possible. An operator can run MediaMTX or a comparable relay on a public host; configure publishing authentication, HTTPS/TLS where supported, firewall ingress, and a stable public hostname. This repo deliberately does not provision a relay or hard-code its credentials.

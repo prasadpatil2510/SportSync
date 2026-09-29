@@ -24,6 +24,8 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - Exactly one generated PIN is active system-wide alongside the permanent testing PIN. Creating a new generated PIN immediately invalidates the previous generated PIN and its read-only tokens, including when the new PIN is for a different match.
 - Generated PINs expire after four hours. Failed PIN attempts must be rate limited.
 - Stream keys are not logged, persisted, included in URLs displayed to viewers, or checked into source control.
+- A staging APK may receive a temporary test endpoint and stream key through build-time environment variables. The values must remain absent from committed source and non-staging variants, and testers must be warned that the APK contains the temporary credential.
+- Staging provides a blank-screen test source with silent audio so ingest connectivity can be verified without camera or microphone permission.
 - Stream may start only after the broadcaster explicitly presses Start; leaving the broadcast screen stops camera and network publishing.
 - Production authentication and testing bypass remain separate.
 - The existing auction and OBS projects are not modified.
@@ -45,6 +47,7 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - [x] PIN expiry, invalid PIN, revoked overlay token, and unauthorized edit requests have tests.
 - [x] Permanent PIN, generated-PIN replacement, cross-match rotation, expiry, revocation, and malformed PIN cases have end-to-end API tests.
 - [ ] Android staging APK compiles and has been tested with a real camera/microphone device and test ingest. (Build passed; device/ingest test pending.)
+- [x] Staging can compile with build-time test credentials and start a black-video/silent-audio test source without camera or microphone permission.
 
 ## Compatibility
 
@@ -55,3 +58,4 @@ Add a forward-only D1 migration for broadcast grants and add read-only API route
 - 2026-09-22: Use manual YouTube stream keys for testing; no YouTube account integration.
 - 2026-09-22: Remote OBS mode must work across the internet, not only same Wi-Fi. It therefore requires a public ingest/relay endpoint supplied by the operator.
 - 2026-09-22: Keep OBS composition on the PC; only provide a browser-source overlay from this project.
+- 2026-09-29: Permit temporary build-time credentials and a blank-screen staging test mode; never commit the supplied key.

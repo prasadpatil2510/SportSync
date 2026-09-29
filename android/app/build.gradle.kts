@@ -1,6 +1,8 @@
 import com.google.firebase.appdistribution.gradle.firebaseAppDistribution
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+fun quotedBuildConfig(value: String): String = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -21,8 +23,10 @@ android {
         applicationId = "club.nmtcc.cricket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 21
-        versionName = "0.15.0"
+        versionCode = 22
+        versionName = "0.16.0"
+        buildConfigField("String", "TEST_BROADCAST_SERVER", quotedBuildConfig(""))
+        buildConfigField("String", "TEST_BROADCAST_KEY", quotedBuildConfig(""))
     }
 
     buildFeatures { compose = true; buildConfig = true }
@@ -42,6 +46,8 @@ android {
             buildConfigField("String", "API_BASE_URL", "\"https://nmtcc-cricket-api-testing.nmtcccricketapi.workers.dev\"")
             buildConfigField("String", "API_WRITE_TOKEN", "\"\"")
             buildConfigField("boolean", "TEST_AUTH_BYPASS", "true")
+            buildConfigField("String", "TEST_BROADCAST_SERVER", quotedBuildConfig(providers.environmentVariable("SPORTSYNC_TEST_BROADCAST_SERVER").orNull ?: ""))
+            buildConfigField("String", "TEST_BROADCAST_KEY", quotedBuildConfig(providers.environmentVariable("SPORTSYNC_TEST_BROADCAST_KEY").orNull ?: ""))
             firebaseAppDistribution {
                 artifactType = "APK"
                 appId = providers.environmentVariable("FIREBASE_ANDROID_APP_ID").orNull

@@ -21,6 +21,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.gl.render.filters.`object`.TextFilterRender
+import com.pedro.encoder.input.sources.audio.SilenceAudioSource
+import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.rtmp.RtmpStream
 import com.pedro.library.view.OpenGlView
 import kotlinx.coroutines.Dispatchers
@@ -40,8 +42,9 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var session by remember { mutableStateOf<BroadcastSession?>(null) }
     var snapshot by remember { mutableStateOf<BroadcastSnapshot?>(null) }
     var mode by remember { mutableStateOf(BroadcastMode.YOUTUBE) }
-    var serverUrl by remember { mutableStateOf("rtmps://a.rtmps.youtube.com/live2") }
-    var streamKey by remember { mutableStateOf("") }
+    var serverUrl by remember { mutableStateOf(BuildConfig.TEST_BROADCAST_SERVER.ifBlank { "rtmps://a.rtmps.youtube.com/live2" }) }
+    var streamKey by remember { mutableStateOf(BuildConfig.TEST_BROADCAST_KEY) }
+    var blankTest by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var streaming by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
@@ -55,14 +58,17 @@ fun BroadcastScreen(onBack: () -> Unit) {
         override fun onAuthError() { message = "Stream authentication failed"; streaming = false }
         override fun onAuthSuccess() {}
     } }
-    val stream = remember { RtmpStream(context, checker) }
+    val stream = remember(blankTest) {
+        if (blankTest) RtmpStream(context, checker, NoVideoSource(), SilenceAudioSource())
+        else RtmpStream(context, checker)
+    }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         message = if (result.values.all { it }) "Camera and microphone ready" else "Camera and microphone permissions are required"
     }
     val havePermissions = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED &&
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    DisposableEffect(Unit) {
+    DisposableEffect(stream) {
         val activity = context as? android.app.Activity
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
@@ -84,7 +90,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     }
     LaunchedEffect(snapshot, mode, streaming) {
         val score = snapshot ?: return@LaunchedEffect
-        if (mode == BroadcastMode.YOUTUBE && streaming) {
+        if (mode == BroadcastMode.YOUTUBE && streaming && !blankTest) {
             val label = "${score.teamA} vs ${score.teamB}  ${score.runs}/${score.wickets}  ${score.legalBalls / 6}.${score.legalBalls % 6} ov"
             val filter = TextFilterRender().apply { setText(label, 34f, AndroidColor.WHITE, AndroidColor.BLACK) }
             stream.getGlInterface().setFilter(filter)
@@ -121,6 +127,10 @@ fun BroadcastScreen(onBack: () -> Unit) {
                 FilterChip(selected = mode == BroadcastMode.YOUTUBE, onClick = { if (!streaming) { mode = BroadcastMode.YOUTUBE; serverUrl = "rtmps://a.rtmps.youtube.com/live2" } }, label = { Text("Direct YouTube") })
                 FilterChip(selected = mode == BroadcastMode.REMOTE_OBS, onClick = { if (!streaming) { mode = BroadcastMode.REMOTE_OBS; serverUrl = "" } }, label = { Text("Remote OBS") })
             }
+            if (BuildConfig.TEST_AUTH_BYPASS) {
+                FilterChip(selected = blankTest, onClick = { if (!streaming) { blankTest = !blankTest; preview = false; openGlView = null } }, label = { Text("Blank-screen test") })
+                if (BuildConfig.TEST_BROADCAST_KEY.isNotBlank()) Text("Testing endpoint is preloaded in this beta APK. Do not share this build outside the test group.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
             Text(if (mode == BroadcastMode.YOUTUBE) "Enter the RTMPS server and stream key from YouTube Live Control Room. The score is added to the outgoing video." else "Enter your public RTMP/RTMPS relay address and stream key. In OBS, open the relay stream and add the score overlay URL as a Browser Source. Internet access is required on both ends.")
             OutlinedTextField(serverUrl, { serverUrl = it.trim() }, label = { Text(if (mode == BroadcastMode.YOUTUBE) "YouTube RTMPS server" else "Public relay RTMP/RTMPS server") }, modifier = Modifier.fillMaxWidth(), enabled = !streaming)
             OutlinedTextField(streamKey, { streamKey = it.trim() }, label = { Text("Stream key (testing only; never saved)") }, modifier = Modifier.fillMaxWidth(), enabled = !streaming)
@@ -129,27 +139,31 @@ fun BroadcastScreen(onBack: () -> Unit) {
                 OutlinedButton(onClick = { (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("OBS score overlay", session!!.overlayUrl)); message = "OBS URL copied" }) { Text("COPY OBS URL") }
                 Text("Treat the overlay URL as private. The scorer can revoke it by ending the PIN.")
             }
-            if (!havePermissions) Button(onClick = { permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }) { Text("ALLOW CAMERA + MICROPHONE") }
-            if (havePermissions) {
+            if (!blankTest && !havePermissions) Button(onClick = { permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }) { Text("ALLOW CAMERA + MICROPHONE") }
+            if (!blankTest && havePermissions) {
                 AndroidView(factory = { OpenGlView(it).also { view -> openGlView = view } }, modifier = Modifier.fillMaxWidth().height(220.dp))
+            }
+            if (blankTest || havePermissions) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!blankTest) {
                     Button(onClick = {
                         val view = openGlView
                         if (view == null) { message = "Camera preview is not ready"; return@Button }
                         runCatching { stream.startPreview(view); preview = true }
                             .onFailure { message = it.message ?: "Camera preview failed" }
                     }, enabled = !preview && !streaming) { Text("PREVIEW") }
+                    }
                     Button(onClick = {
                         val url = buildStreamUrl(serverUrl, streamKey)
                         if (url == null) { message = "Enter an RTMP/RTMPS server and stream key"; return@Button }
                         runCatching {
-                            if (!preview) { val view = openGlView ?: error("Camera preview not ready"); stream.startPreview(view); preview = true }
+                            if (!blankTest && !preview) { val view = openGlView ?: error("Camera preview not ready"); stream.startPreview(view); preview = true }
                             if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
                             if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
                             stream.startStream(url)
                             message = "Connecting…"
                         }.onFailure { message = it.message ?: "Broadcast could not start" }
-                    }, enabled = !streaming && serverUrl.isNotBlank() && streamKey.isNotBlank() && snapshot != null) { Text("START") }
+                    }, enabled = !streaming && serverUrl.isNotBlank() && streamKey.isNotBlank() && snapshot != null) { Text(if (blankTest) "START BLANK TEST" else "START") }
                     OutlinedButton(onClick = { if (stream.isStreaming) stream.stopStream(); streaming = false }, enabled = streaming) { Text("STOP") }
                 }
             }
