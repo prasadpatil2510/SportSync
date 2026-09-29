@@ -6,8 +6,14 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import android.graphics.Typeface
 import android.view.SurfaceHolder
+import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
+import android.graphics.drawable.GradientDrawable
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -26,7 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
-import com.pedro.encoder.input.gl.render.filters.`object`.TextFilterRender
+import com.pedro.encoder.input.gl.render.filters.ViewFilterRender
 import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
 import com.pedro.encoder.input.sources.video.NoVideoSource
@@ -103,11 +109,10 @@ fun BroadcastScreen(onBack: () -> Unit) {
     LaunchedEffect(snapshot, mode, prepared, stream) {
         val score = snapshot ?: return@LaunchedEffect
         if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
-            val label = "${score.teamA} vs ${score.teamB}  ${score.runs}/${score.wickets}  ${score.legalBalls / 6}.${score.legalBalls % 6} ov"
-            val filter = TextFilterRender()
+            val filter = ViewFilterRender()
             stream.getGlInterface().setFilter(filter)
-            filter.setText(label, 30f, AndroidColor.WHITE, AndroidColor.BLACK)
-            filter.setScale(94f, 12f)
+            filter.view = createEncodedScorebar(context, score)
+            filter.setScale(96f, 17f)
             filter.setPosition(TranslateTo.BOTTOM)
         }
     }
@@ -262,3 +267,53 @@ private fun BroadcastCameraScorebar(score: BroadcastSnapshot, modifier: Modifier
 }
 
 private fun String.firstName(): String = trim().substringBefore(' ').ifBlank { "—" }
+
+private fun createEncodedScorebar(context: Context, score: BroadcastSnapshot): View {
+    fun rounded(color: Int, radius: Float = 52f) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius
+    }
+    fun label(text: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply {
+        this.text = text
+        textSize = size
+        setTextColor(color)
+        gravity = Gravity.CENTER_VERTICAL
+        maxLines = 1
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+    fun column(primary: String, secondary: String, width: Int, horizontalGravity: Int) = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(24, 0, 24, 0)
+        addView(label(primary, 24f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52).apply { gravity = horizontalGravity })
+        addView(label(secondary, 15f, AndroidColor.rgb(102, 112, 133)), LinearLayout.LayoutParams(width, 34).apply { gravity = horizontalGravity })
+    }
+
+    val root = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        background = rounded(AndroidColor.rgb(242, 242, 242))
+        layoutParams = LinearLayout.LayoutParams(1280, 116)
+    }
+    root.addView(
+        column("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", "STRIKER  •  NON-STRIKER", 430, Gravity.START),
+        LinearLayout.LayoutParams(430, 116)
+    )
+    root.addView(LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        background = rounded(AndroidColor.rgb(9, 31, 98))
+        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 28f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(390, 66).apply { gravity = Gravity.CENTER })
+        addView(label("${score.teamA}  vs  ${score.teamB}", 14f, AndroidColor.rgb(183, 192, 218)), LinearLayout.LayoutParams(390, 32).apply { gravity = Gravity.CENTER })
+    }, LinearLayout.LayoutParams(390, 116))
+    root.addView(
+        column(score.bowler.firstName(), "THIS OVER  —", 430, Gravity.START),
+        LinearLayout.LayoutParams(430, 116)
+    )
+    root.measure(
+        View.MeasureSpec.makeMeasureSpec(1250, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(116, View.MeasureSpec.EXACTLY)
+    )
+    root.layout(0, 0, 1250, 116)
+    return root
+}

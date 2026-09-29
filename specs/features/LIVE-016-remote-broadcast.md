@@ -18,7 +18,7 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - Camera and microphone permission are requested only on the broadcaster device.
 - Camera and microphone encoders are prepared before preview begins, and the score overlay is attached before publishing starts.
 - Live camera startup waits for the Android preview surface callback before preparing and opening the camera.
-- The Broadcast screen layers a visible scorebar over the camera preview while the encoded output also receives an OpenGL score filter.
+- The Broadcast screen layers a visible scorebar over the camera preview while the encoded output receives an OpenGL-rendered Android scorebar view with the same two-line score content; a Compose-only preview overlay is not treated as proof that the scorebar is present in the RTMP output.
 
 ## Rules and invariants
 
@@ -65,3 +65,4 @@ Add a forward-only D1 migration for broadcast grants and add read-only API route
 - 2026-09-29: Permit temporary build-time credentials and a blank-screen staging test mode; never commit the supplied key.
 - 2026-09-29: Use RootEncoder's standard camera and microphone source for live mode; prepare encoders before starting preview or publishing.
 - 2026-09-29: Follow RootEncoder's documented `SurfaceHolder.Callback` lifecycle because opening the camera before `OpenGlView` is ready produces a blank preview on some devices.
+- 2026-09-29: Render the full scorebar into RootEncoder with `ViewFilterRender`; the separate Compose preview layer is local-only and cannot appear in YouTube by itself.
