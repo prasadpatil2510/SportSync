@@ -12,6 +12,7 @@ This file governs all AI-assisted changes in this repository.
 6. Run the quick harness. Run the full harness before a release.
 7. Do not mark acceptance criteria complete until evidence exists.
 8. Keep Android testing, backend testing and production environments isolated.
+9. After every successful Android staging build, distribute that version through Firebase App Distribution and verify the uploaded version, unless the user explicitly says not to distribute it.
 
 ## Definition of done
 
