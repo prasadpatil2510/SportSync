@@ -6,21 +6,28 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import android.view.SurfaceHolder
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.gl.render.filters.`object`.TextFilterRender
+import com.pedro.encoder.utils.gl.TranslateTo
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
 import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.rtmp.RtmpStream
@@ -52,6 +59,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var streaming by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
     var prepared by remember { mutableStateOf(false) }
+    var surfaceReady by remember { mutableStateOf(false) }
     var openGlView by remember { mutableStateOf<OpenGlView?>(null) }
     val checker = remember { object : ConnectChecker {
         override fun onConnectionStarted(url: String) { message = "Connecting…" }
@@ -96,8 +104,11 @@ fun BroadcastScreen(onBack: () -> Unit) {
         val score = snapshot ?: return@LaunchedEffect
         if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
             val label = "${score.teamA} vs ${score.teamB}  ${score.runs}/${score.wickets}  ${score.legalBalls / 6}.${score.legalBalls % 6} ov"
-            val filter = TextFilterRender().apply { setText(label, 34f, AndroidColor.WHITE, AndroidColor.BLACK) }
+            val filter = TextFilterRender()
             stream.getGlInterface().setFilter(filter)
+            filter.setText(label, 30f, AndroidColor.WHITE, AndroidColor.BLACK)
+            filter.setScale(94f, 12f)
+            filter.setPosition(TranslateTo.BOTTOM)
         }
     }
     LaunchedEffect(message) {
@@ -146,7 +157,36 @@ fun BroadcastScreen(onBack: () -> Unit) {
             }
             if (!blankTest && !havePermissions) Button(onClick = { permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }) { Text("ALLOW CAMERA + MICROPHONE") }
             if (!blankTest && havePermissions) {
-                AndroidView(factory = { OpenGlView(it).also { view -> openGlView = view } }, modifier = Modifier.fillMaxWidth().height(220.dp))
+                Box(Modifier.fillMaxWidth().height(220.dp)) {
+                    AndroidView(factory = { viewContext ->
+                        OpenGlView(viewContext).also { view ->
+                            openGlView = view
+                            view.holder.addCallback(object : SurfaceHolder.Callback {
+                                override fun surfaceCreated(holder: SurfaceHolder) = Unit
+                                override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                                    surfaceReady = true
+                                    runCatching {
+                                        if (!prepared) {
+                                            if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
+                                            if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
+                                            prepared = true
+                                        }
+                                        stream.getGlInterface().setPreviewResolution(width, height)
+                                        if (!stream.isOnPreview) stream.startPreview(view)
+                                        preview = true
+                                        message = "Live camera preview ready"
+                                    }.onFailure { message = it.message ?: "Camera preview failed" }
+                                }
+                                override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                    surfaceReady = false
+                                    if (stream.isOnPreview && !stream.isStreaming) stream.stopPreview()
+                                    preview = false
+                                }
+                            })
+                        }
+                    }, modifier = Modifier.fillMaxSize())
+                    score?.let { BroadcastCameraScorebar(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)) }
+                }
             }
             if (blankTest || havePermissions) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -165,7 +205,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
                             message = "Camera preview ready"
                         }
                             .onFailure { message = it.message ?: "Camera preview failed" }
-                    }, enabled = !preview && !streaming) { Text("PREVIEW") }
+                    }, enabled = surfaceReady && !preview && !streaming) { Text(if(surfaceReady) "PREVIEW" else "CAMERA LOADING…") }
                     }
                     Button(onClick = {
                         val url = buildStreamUrl(serverUrl, streamKey)
@@ -195,3 +235,30 @@ internal fun buildStreamUrl(server:String, key:String):String? {
     if (!trimmed.matches(Regex("^rtmps?://[^\\s/?#]+(?:/[^\\s?#]*)?")) || secret.isEmpty() || secret.any(Char::isWhitespace)) return null
     return "$trimmed/$secret"
 }
+
+@Composable
+private fun BroadcastCameraScorebar(score: BroadcastSnapshot, modifier: Modifier = Modifier) {
+    Surface(modifier = modifier.fillMaxWidth(.96f).height(48.dp), shape = RoundedCornerShape(50), color = Color(0xFFF2F2F2), shadowElevation = 5.dp) {
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1.15f).padding(start = 12.dp), verticalArrangement = Arrangement.Center) {
+                Text("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", color = Color(0xFF0A173A), style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
+                Text("STRIKER  •  NON-STRIKER", color = Color(0xFF667085), fontSize = 8.sp, maxLines = 1)
+            }
+            Surface(color = Color(0xFF091F62), shape = RoundedCornerShape(50), modifier = Modifier.weight(.9f).fillMaxHeight()) {
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    Text(score.battingTeam.take(3).uppercase(), color = Color(0xFFB7C0DA), fontSize = 9.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Spacer(Modifier.width(6.dp))
+                    Text("${score.runs}/${score.wickets}", color = Color.White, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Black)
+                    Spacer(Modifier.width(6.dp))
+                    Text("${score.legalBalls / 6}.${score.legalBalls % 6}", color = Color.White, fontSize = 9.sp)
+                }
+            }
+            Column(Modifier.weight(1.15f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.Center) {
+                Text(score.bowler.firstName(), color = Color(0xFF0A173A), style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
+                Text("THIS OVER  —", color = Color(0xFF667085), fontSize = 8.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+private fun String.firstName(): String = trim().substringBefore(' ').ifBlank { "—" }

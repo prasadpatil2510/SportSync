@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.21.0 testing beta.
+SportSync Cricket - version 0.22.0 testing beta.
+
+- Camera now waits for the Android preview surface before opening
+- Live preview starts automatically once the surface and permissions are ready
+- Added a clearly visible scorebar directly over the Broadcast camera preview
+- Added a bottom-positioned OpenGL score filter to the encoded YouTube output
 
 - Expanded the reference scorebar into a reliable two-line layout
 - Non-striker and current-over sequence now remain visible

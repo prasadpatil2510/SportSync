@@ -29,7 +29,7 @@ data class AppUser(val id:String,val email:String,val displayName:String,val rol
 data class AuthSession(val token:String,val expiresAt:String,val user:AppUser)
 data class BroadcastGrant(val pin:String,val expiresAt:String)
 data class BroadcastSession(val matchId:String,val phoneToken:String,val overlayUrl:String,val expiresAt:String)
-data class BroadcastSnapshot(val teamA:String,val teamB:String,val runs:Int,val wickets:Int,val legalBalls:Int,val oversLimit:Int,val status:String)
+data class BroadcastSnapshot(val teamA:String,val teamB:String,val battingTeam:String,val bowlingTeam:String,val runs:Int,val wickets:Int,val legalBalls:Int,val oversLimit:Int,val status:String,val striker:String,val nonStriker:String,val bowler:String)
 
 class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private val authToken: String = "", private val legacyAdminToken: String = BuildConfig.API_WRITE_TOKEN) {
     private fun request(path: String, method: String = "GET", payload: JSONObject? = null): String {
@@ -61,7 +61,7 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     fun createBroadcastGrant(matchId:String):BroadcastGrant { val json=JSONObject(request("/api/matches/$matchId/broadcast/grant","POST",JSONObject()));return BroadcastGrant(json.string("pin"),json.string("expiresAt")) }
     fun revokeBroadcastGrant(matchId:String) { request("/api/matches/$matchId/broadcast/grant","DELETE") }
     fun redeemBroadcastPin(pin:String):BroadcastSession { val json=JSONObject(request("/api/broadcast/redeem","POST",JSONObject().put("pin",pin)));return BroadcastSession(json.string("matchId"),json.string("phoneToken"),json.string("overlayUrl"),json.string("expiresAt")) }
-    fun broadcastSnapshot():BroadcastSnapshot { val json=JSONObject(request("/api/broadcast/snapshot"));return BroadcastSnapshot(json.string("teamA"),json.string("teamB"),json.optInt("runs"),json.optInt("wickets"),json.optInt("legalBalls"),json.optInt("oversLimit"),json.string("status")) }
+    fun broadcastSnapshot():BroadcastSnapshot { val json=JSONObject(request("/api/broadcast/snapshot"));return BroadcastSnapshot(json.string("teamA"),json.string("teamB"),json.string("battingTeam"),json.string("bowlingTeam"),json.optInt("runs"),json.optInt("wickets"),json.optInt("legalBalls"),json.optInt("oversLimit"),json.string("status"),json.string("striker"),json.string("nonStriker"),json.string("bowler")) }
     fun login(email:String,pin:String):AuthSession = JSONObject(request("/api/auth/login","POST",JSONObject().put("email",email).put("pin",pin))).toAuthSession()
     fun testingSession():AuthSession = JSONObject(request("/api/auth/testing-session","POST",JSONObject())).toAuthSession()
     fun register(displayName:String,email:String,pin:String):AuthSession = JSONObject(request("/api/auth/register","POST",JSONObject().put("displayName",displayName).put("email",email).put("pin",pin))).toAuthSession()
