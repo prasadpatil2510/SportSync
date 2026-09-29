@@ -1,6 +1,7 @@
 package club.nmtcc.cricket
 
 import android.Manifest
+import android.content.pm.ActivityInfo
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -19,21 +20,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
+import com.pedro.common.AudioCodec
+import com.pedro.common.VideoCodec
 import com.pedro.encoder.input.gl.render.filters.ViewFilterRender
-import com.pedro.encoder.utils.gl.TranslateTo
+import com.pedro.encoder.utils.gl.AspectRatioMode
+import com.pedro.encoder.input.sources.OrientationForced
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
 import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.rtmp.RtmpStream
@@ -46,6 +47,13 @@ import kotlinx.coroutines.withContext
 
 private enum class BroadcastMode { YOUTUBE, REMOTE_OBS }
 private const val PERMANENT_TEST_BROADCAST_PIN = "301022"
+private const val COMPOSITION_WIDTH = 1920
+private const val COMPOSITION_HEIGHT = 1080
+private const val BROADCAST_FPS = 30
+private const val BROADCAST_VIDEO_BITRATE = 9_000_000
+private const val BROADCAST_KEYFRAME_INTERVAL_SECONDS = 2
+private const val BROADCAST_AUDIO_BITRATE = 128_000
+private const val BROADCAST_AUDIO_SAMPLE_RATE = 48_000
 internal const val BROADCAST_PREFERENCES = "sports-sync-broadcast"
 internal const val LAST_BROADCAST_PIN = "last-generated-pin"
 
@@ -58,7 +66,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var session by remember { mutableStateOf<BroadcastSession?>(null) }
     var snapshot by remember { mutableStateOf<BroadcastSnapshot?>(null) }
     var mode by remember { mutableStateOf(BroadcastMode.YOUTUBE) }
-    var serverUrl by remember { mutableStateOf(BuildConfig.TEST_BROADCAST_SERVER.ifBlank { "rtmps://a.rtmps.youtube.com/live2" }) }
+    var serverUrl by remember { mutableStateOf(BuildConfig.TEST_BROADCAST_SERVER.takeIf { it.startsWith("rtmps://") } ?: "rtmps://a.rtmps.youtube.com/live2") }
     var streamKey by remember { mutableStateOf(BuildConfig.TEST_BROADCAST_KEY) }
     var blankTest by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
@@ -88,12 +96,15 @@ fun BroadcastScreen(onBack: () -> Unit) {
 
     DisposableEffect(stream) {
         val activity = context as? android.app.Activity
+        val previousOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             if (stream.isStreaming) stream.stopStream()
             if (preview) stream.stopPreview()
             stream.release()
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            if (previousOrientation != null) activity.requestedOrientation = previousOrientation
         }
     }
     LaunchedEffect(session) {
@@ -112,8 +123,8 @@ fun BroadcastScreen(onBack: () -> Unit) {
             val filter = ViewFilterRender()
             stream.getGlInterface().setFilter(filter)
             filter.view = createEncodedScorebar(context, score)
-            filter.setScale(96f, 17f)
-            filter.setPosition(TranslateTo.BOTTOM)
+            filter.setScale(94f, 15f)
+            filter.setPosition(3f, 82f)
         }
     }
     LaunchedEffect(message) {
@@ -153,6 +164,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
                 if (BuildConfig.TEST_BROADCAST_KEY.isNotBlank()) Text("Testing endpoint is preloaded in this beta APK. Do not share this build outside the test group.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Text(if (mode == BroadcastMode.YOUTUBE) "Enter the RTMPS server and stream key from YouTube Live Control Room. The score is added to the outgoing video." else "Enter your public RTMP/RTMPS relay address and stream key. In OBS, open the relay stream and add the score overlay URL as a Browser Source. Internet access is required on both ends.")
+            if (mode == BroadcastMode.YOUTUBE) Text("LANDSCAPE • 1920×1080 • 30 FPS • H.264 9 Mbps • AAC 128 kbps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             OutlinedTextField(serverUrl, { serverUrl = it.trim() }, label = { Text(if (mode == BroadcastMode.YOUTUBE) "YouTube RTMPS server" else "Public relay RTMP/RTMPS server") }, modifier = Modifier.fillMaxWidth(), enabled = !streaming)
             OutlinedTextField(streamKey, { streamKey = it.trim() }, label = { Text("Stream key (testing only; never saved)") }, modifier = Modifier.fillMaxWidth(), enabled = !streaming)
             if (mode == BroadcastMode.REMOTE_OBS) {
@@ -162,7 +174,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
             }
             if (!blankTest && !havePermissions) Button(onClick = { permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }) { Text("ALLOW CAMERA + MICROPHONE") }
             if (!blankTest && havePermissions) {
-                Box(Modifier.fillMaxWidth().height(220.dp)) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
                     AndroidView(factory = { viewContext ->
                         OpenGlView(viewContext).also { view ->
                             openGlView = view
@@ -171,11 +183,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
                                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
                                     surfaceReady = true
                                     runCatching {
-                                        if (!prepared) {
-                                            if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
-                                            if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
-                                            prepared = true
-                                        }
+                                        if (!prepared) prepared = prepareBroadcastPipeline(stream)
                                         stream.getGlInterface().setPreviewResolution(width, height)
                                         if (!stream.isOnPreview) stream.startPreview(view)
                                         preview = true
@@ -190,7 +198,6 @@ fun BroadcastScreen(onBack: () -> Unit) {
                             })
                         }
                     }, modifier = Modifier.fillMaxSize())
-                    score?.let { BroadcastCameraScorebar(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp)) }
                 }
             }
             if (blankTest || havePermissions) {
@@ -200,11 +207,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
                         val view = openGlView
                         if (view == null) { message = "Camera preview is not ready"; return@Button }
                         runCatching {
-                            if (!prepared) {
-                                if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
-                                if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
-                                prepared = true
-                            }
+                            if (!prepared) prepared = prepareBroadcastPipeline(stream)
                             stream.startPreview(view)
                             preview = true
                             message = "Camera preview ready"
@@ -215,12 +218,9 @@ fun BroadcastScreen(onBack: () -> Unit) {
                     Button(onClick = {
                         val url = buildStreamUrl(serverUrl, streamKey)
                         if (url == null) { message = "Enter an RTMP/RTMPS server and stream key"; return@Button }
+                        if (mode == BroadcastMode.YOUTUBE && !url.startsWith("rtmps://")) { message = "YouTube broadcasting requires an RTMPS server"; return@Button }
                         runCatching {
-                            if (!prepared) {
-                                if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
-                                if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
-                                prepared = true
-                            }
+                            if (!prepared) prepared = prepareBroadcastPipeline(stream)
                             if (!blankTest && !preview) { val view = openGlView ?: error("Camera preview not ready"); stream.startPreview(view); preview = true }
                             stream.startStream(url)
                             message = "Connecting…"
@@ -241,32 +241,29 @@ internal fun buildStreamUrl(server:String, key:String):String? {
     return "$trimmed/$secret"
 }
 
-@Composable
-private fun BroadcastCameraScorebar(score: BroadcastSnapshot, modifier: Modifier = Modifier) {
-    Surface(modifier = modifier.fillMaxWidth(.96f).height(48.dp), shape = RoundedCornerShape(50), color = Color(0xFFF2F2F2), shadowElevation = 5.dp) {
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1.15f).padding(start = 12.dp), verticalArrangement = Arrangement.Center) {
-                Text("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", color = Color(0xFF0A173A), style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
-                Text("STRIKER  •  NON-STRIKER", color = Color(0xFF667085), fontSize = 8.sp, maxLines = 1)
-            }
-            Surface(color = Color(0xFF091F62), shape = RoundedCornerShape(50), modifier = Modifier.weight(.9f).fillMaxHeight()) {
-                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                    Text(score.battingTeam.take(3).uppercase(), color = Color(0xFFB7C0DA), fontSize = 9.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    Spacer(Modifier.width(6.dp))
-                    Text("${score.runs}/${score.wickets}", color = Color.White, fontSize = 18.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Black)
-                    Spacer(Modifier.width(6.dp))
-                    Text("${score.legalBalls / 6}.${score.legalBalls % 6}", color = Color.White, fontSize = 9.sp)
-                }
-            }
-            Column(Modifier.weight(1.15f).padding(horizontal = 12.dp), verticalArrangement = Arrangement.Center) {
-                Text(score.bowler.firstName(), color = Color(0xFF0A173A), style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, maxLines = 1)
-                Text("THIS OVER  —", color = Color(0xFF667085), fontSize = 8.sp, maxLines = 1)
-            }
-        }
-    }
-}
-
 private fun String.firstName(): String = trim().substringBefore(' ').ifBlank { "—" }
+
+private fun prepareBroadcastPipeline(stream: RtmpStream): Boolean {
+    stream.setVideoCodec(VideoCodec.H264)
+    stream.setAudioCodec(AudioCodec.AAC)
+    stream.forceFpsLimit(true)
+    stream.forceBt709Color(true)
+    stream.getGlInterface().apply {
+        forceOrientation(OrientationForced.LANDSCAPE)
+        setAspectRatioMode(AspectRatioMode.Fill)
+        setEncoderSize(COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
+        setStreamIsPortrait(false)
+        setPreviewIsPortrait(false)
+        forceFpsLimit(BROADCAST_FPS)
+    }
+    if (!stream.prepareVideo(COMPOSITION_WIDTH, COMPOSITION_HEIGHT, BROADCAST_VIDEO_BITRATE, BROADCAST_FPS, BROADCAST_KEYFRAME_INTERVAL_SECONDS, 0)) {
+        error("1080p H.264 video encoder unavailable on this device")
+    }
+    if (!stream.prepareAudio(BROADCAST_AUDIO_SAMPLE_RATE, true, BROADCAST_AUDIO_BITRATE)) {
+        error("AAC microphone encoder unavailable")
+    }
+    return true
+}
 
 private fun createEncodedScorebar(context: Context, score: BroadcastSnapshot): View {
     fun rounded(color: Int, radius: Float = 52f) = GradientDrawable().apply {
@@ -293,27 +290,27 @@ private fun createEncodedScorebar(context: Context, score: BroadcastSnapshot): V
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         background = rounded(AndroidColor.rgb(242, 242, 242))
-        layoutParams = LinearLayout.LayoutParams(1280, 116)
+        layoutParams = LinearLayout.LayoutParams(1800, 162)
     }
     root.addView(
-        column("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", "STRIKER  •  NON-STRIKER", 430, Gravity.START),
-        LinearLayout.LayoutParams(430, 116)
+        column("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", "STRIKER  •  NON-STRIKER", 620, Gravity.START),
+        LinearLayout.LayoutParams(620, 162)
     )
     root.addView(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         background = rounded(AndroidColor.rgb(9, 31, 98))
-        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 28f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(390, 66).apply { gravity = Gravity.CENTER })
-        addView(label("${score.teamA}  vs  ${score.teamB}", 14f, AndroidColor.rgb(183, 192, 218)), LinearLayout.LayoutParams(390, 32).apply { gravity = Gravity.CENTER })
-    }, LinearLayout.LayoutParams(390, 116))
+        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 32f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(560, 88).apply { gravity = Gravity.CENTER })
+        addView(label("${score.teamA}  vs  ${score.teamB}", 17f, AndroidColor.rgb(183, 192, 218)), LinearLayout.LayoutParams(560, 44).apply { gravity = Gravity.CENTER })
+    }, LinearLayout.LayoutParams(560, 162))
     root.addView(
-        column(score.bowler.firstName(), "THIS OVER  —", 430, Gravity.START),
-        LinearLayout.LayoutParams(430, 116)
+        column(score.bowler.firstName(), "THIS OVER  —", 620, Gravity.START),
+        LinearLayout.LayoutParams(620, 162)
     )
     root.measure(
-        View.MeasureSpec.makeMeasureSpec(1250, View.MeasureSpec.EXACTLY),
-        View.MeasureSpec.makeMeasureSpec(116, View.MeasureSpec.EXACTLY)
+        View.MeasureSpec.makeMeasureSpec(1800, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(162, View.MeasureSpec.EXACTLY)
     )
-    root.layout(0, 0, 1250, 116)
+    root.layout(0, 0, 1800, 162)
     return root
 }

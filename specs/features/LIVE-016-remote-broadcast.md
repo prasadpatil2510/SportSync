@@ -13,12 +13,17 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - A second Android device enters the match PIN, then selects either direct YouTube RTMPS or a remotely reachable RTMPS/RTMP ingest for OBS.
 - The YouTube stream key is entered manually on the broadcast device and is never sent to the SportSync API or persisted.
 - Direct YouTube mode burns a compact live score strip into the outgoing video.
+- Direct YouTube mode uses one native-landscape 1920×1080 OpenGL composition for both preview and encoded output: center-cropped 16:9 camera plus the cricket overlay.
+- The direct YouTube encoder uses H.264 at 30 FPS, 9 Mbps and a two-second keyframe interval, with AAC stereo audio at 128 kbps, and accepts RTMPS ingest only.
 - OBS mode sends camera and microphone without a burned score strip. OBS uses a separate browser-source overlay URL for current score data.
 - The overlay URL is keyed by an unguessable read-only token and can be revoked/rotated.
 - Camera and microphone permission are requested only on the broadcaster device.
 - Camera and microphone encoders are prepared before preview begins, and the score overlay is attached before publishing starts.
 - Live camera startup waits for the Android preview surface callback before preparing and opening the camera.
 - The Broadcast screen layers a visible scorebar over the camera preview while the encoded output receives an OpenGL-rendered Android scorebar view with the same two-line score content; a Compose-only preview overlay is not treated as proof that the scorebar is present in the RTMP output.
+- Only the Broadcast screen locks the activity to sensor-landscape. Leaving it restores the activity's prior orientation policy.
+- MainActivity handles screen-size/orientation configuration changes in place so entering landscape does not discard the current Broadcast session; navigation state is also saveable for ordinary activity recreation.
+- Overlay geometry is expressed as percentages of the fixed 1920×1080 composition and stays inside three-percent safe margins; physical display size affects only how the composed frame is scaled for preview.
 
 ## Rules and invariants
 
@@ -52,6 +57,9 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - [x] Permanent PIN, generated-PIN replacement, cross-match rotation, expiry, revocation, and malformed PIN cases have end-to-end API tests.
 - [ ] Android staging APK compiles and has been tested with a real camera/microphone device and test ingest. (Build passed; device/ingest test pending.)
 - [x] Staging can compile with build-time test credentials and start a black-video/silent-audio test source without camera or microphone permission.
+- [x] The Android pipeline is configured for a 1920×1080 landscape composition, 30 FPS H.264 at 9 Mbps, two-second keyframes, and AAC at 128 kbps.
+- [x] Preview and encoder consume the same OpenGL camera-plus-overlay composition; no separate Compose scorebar is used on the camera preview.
+- [ ] A physical-device YouTube session confirms 1080p/16:9 playback, matching scorebar geometry and audible microphone audio on at least two phone display aspect ratios.
 
 ## Compatibility
 
@@ -66,3 +74,4 @@ Add a forward-only D1 migration for broadcast grants and add read-only API route
 - 2026-09-29: Use RootEncoder's standard camera and microphone source for live mode; prepare encoders before starting preview or publishing.
 - 2026-09-29: Follow RootEncoder's documented `SurfaceHolder.Callback` lifecycle because opening the camera before `OpenGlView` is ready produces a blank preview on some devices.
 - 2026-09-29: Render the full scorebar into RootEncoder with `ViewFilterRender`; the separate Compose preview layer is local-only and cannot appear in YouTube by itself.
+- 2026-09-29: Standardize direct YouTube broadcast on a fixed 1920×1080/30 landscape master composition. Use OpenGL `Fill` mode for proportional center crop and share that rendered frame between preview and encoder.

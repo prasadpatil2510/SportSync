@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,7 +113,7 @@ fun NmtccApp() {
         val canManage = currentSession.user.role == AppRole.TOURNAMENT_ADMIN
         val canScore = currentSession.user.role == AppRole.SCORER || canManage
         val api = remember(currentSession.token) { CloudApi(authToken = currentSession.token) }
-        var screen by remember { mutableStateOf(Screen.HOME) }
+        var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
         var tournament by remember { mutableStateOf<Tournament?>(null) }
         var team by remember { mutableStateOf<Team?>(null) }
         var cricketMatch by remember { mutableStateOf<CricketMatch?>(null) }
