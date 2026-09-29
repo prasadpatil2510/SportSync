@@ -21,7 +21,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.pedro.common.ConnectChecker
 import com.pedro.encoder.input.gl.render.filters.`object`.TextFilterRender
+import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.audio.SilenceAudioSource
+import com.pedro.encoder.input.sources.video.Camera2Source
 import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.library.rtmp.RtmpStream
 import com.pedro.library.view.OpenGlView
@@ -33,12 +35,15 @@ import kotlinx.coroutines.withContext
 
 private enum class BroadcastMode { YOUTUBE, REMOTE_OBS }
 private const val PERMANENT_TEST_BROADCAST_PIN = "301022"
+internal const val BROADCAST_PREFERENCES = "sports-sync-broadcast"
+internal const val LAST_BROADCAST_PIN = "last-generated-pin"
 
 @Composable
 fun BroadcastScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pin by remember { mutableStateOf("") }
+    val preferences = remember { context.getSharedPreferences(BROADCAST_PREFERENCES, Context.MODE_PRIVATE) }
+    var pin by remember { mutableStateOf(preferences.getString(LAST_BROADCAST_PIN, "").orEmpty()) }
     var session by remember { mutableStateOf<BroadcastSession?>(null) }
     var snapshot by remember { mutableStateOf<BroadcastSnapshot?>(null) }
     var mode by remember { mutableStateOf(BroadcastMode.YOUTUBE) }
@@ -48,6 +53,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var message by remember { mutableStateOf("") }
     var streaming by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
+    var prepared by remember { mutableStateOf(false) }
     var openGlView by remember { mutableStateOf<OpenGlView?>(null) }
     val checker = remember { object : ConnectChecker {
         override fun onConnectionStarted(url: String) { message = "Connecting…" }
@@ -60,7 +66,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     } }
     val stream = remember(blankTest) {
         if (blankTest) RtmpStream(context, checker, NoVideoSource(), SilenceAudioSource())
-        else RtmpStream(context, checker)
+        else RtmpStream(context, checker, Camera2Source(context), MicrophoneSource())
     }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         message = if (result.values.all { it }) "Camera and microphone ready" else "Camera and microphone permissions are required"
@@ -88,9 +94,9 @@ fun BroadcastScreen(onBack: () -> Unit) {
             delay(2_000)
         }
     }
-    LaunchedEffect(snapshot, mode, streaming) {
+    LaunchedEffect(snapshot, mode, prepared, stream) {
         val score = snapshot ?: return@LaunchedEffect
-        if (mode == BroadcastMode.YOUTUBE && streaming && !blankTest) {
+        if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
             val label = "${score.teamA} vs ${score.teamB}  ${score.runs}/${score.wickets}  ${score.legalBalls / 6}.${score.legalBalls % 6} ov"
             val filter = TextFilterRender().apply { setText(label, 34f, AndroidColor.WHITE, AndroidColor.BLACK) }
             stream.getGlInterface().setFilter(filter)
@@ -108,6 +114,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
         if (session == null) {
             Text("Enter the latest six-digit PIN shown on the scoring phone.")
             OutlinedTextField(pin, { value -> if (value.length <= 6 && value.all(Char::isDigit)) pin = value }, label = { Text("Match broadcast PIN") }, modifier = Modifier.fillMaxWidth())
+            if (pin.length == 6 && pin != PERMANENT_TEST_BROADCAST_PIN) Text("Latest generated PIN is ready to connect.", color = MaterialTheme.colorScheme.primary)
             if (BuildConfig.TEST_AUTH_BYPASS) {
                 AssistChip(
                     onClick = { pin = PERMANENT_TEST_BROADCAST_PIN; message = "Permanent testing PIN selected" },
@@ -128,7 +135,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
                 FilterChip(selected = mode == BroadcastMode.REMOTE_OBS, onClick = { if (!streaming) { mode = BroadcastMode.REMOTE_OBS; serverUrl = "" } }, label = { Text("Remote OBS") })
             }
             if (BuildConfig.TEST_AUTH_BYPASS) {
-                FilterChip(selected = blankTest, onClick = { if (!streaming) { blankTest = !blankTest; preview = false; openGlView = null } }, label = { Text("Blank-screen test") })
+                FilterChip(selected = blankTest, onClick = { if (!streaming) { blankTest = !blankTest; preview = false; prepared = false; openGlView = null } }, label = { Text("Blank-screen test") })
                 if (BuildConfig.TEST_BROADCAST_KEY.isNotBlank()) Text("Testing endpoint is preloaded in this beta APK. Do not share this build outside the test group.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Text(if (mode == BroadcastMode.YOUTUBE) "Enter the RTMPS server and stream key from YouTube Live Control Room. The score is added to the outgoing video." else "Enter your public RTMP/RTMPS relay address and stream key. In OBS, open the relay stream and add the score overlay URL as a Browser Source. Internet access is required on both ends.")
@@ -149,7 +156,16 @@ fun BroadcastScreen(onBack: () -> Unit) {
                     Button(onClick = {
                         val view = openGlView
                         if (view == null) { message = "Camera preview is not ready"; return@Button }
-                        runCatching { stream.startPreview(view); preview = true }
+                        runCatching {
+                            if (!prepared) {
+                                if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
+                                if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
+                                prepared = true
+                            }
+                            stream.startPreview(view)
+                            preview = true
+                            message = "Camera preview ready"
+                        }
                             .onFailure { message = it.message ?: "Camera preview failed" }
                     }, enabled = !preview && !streaming) { Text("PREVIEW") }
                     }
@@ -157,9 +173,12 @@ fun BroadcastScreen(onBack: () -> Unit) {
                         val url = buildStreamUrl(serverUrl, streamKey)
                         if (url == null) { message = "Enter an RTMP/RTMPS server and stream key"; return@Button }
                         runCatching {
+                            if (!prepared) {
+                                if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
+                                if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
+                                prepared = true
+                            }
                             if (!blankTest && !preview) { val view = openGlView ?: error("Camera preview not ready"); stream.startPreview(view); preview = true }
-                            if (!stream.prepareVideo(1280, 720, 2_000_000)) error("Video encoder unavailable")
-                            if (!stream.prepareAudio(44_100, true, 128_000)) error("Microphone encoder unavailable")
                             stream.startStream(url)
                             message = "Connecting…"
                         }.onFailure { message = it.message ?: "Broadcast could not start" }

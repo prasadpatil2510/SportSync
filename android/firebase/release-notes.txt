@@ -1,4 +1,8 @@
-SportSync Cricket - version 0.16.0 testing beta.
+SportSync Cricket - version 0.17.0 testing beta.
+
+- Generated broadcast PIN is now shown clearly and saved into the Broadcast screen
+- Camera and microphone encoders are prepared before preview, preventing a blank camera screen
+- Live score overlay is applied before the YouTube stream begins
 
 - Fixed broadcast PIN redemption against the deployed testing API
 - Added a blank-screen and silent-audio YouTube ingest test mode

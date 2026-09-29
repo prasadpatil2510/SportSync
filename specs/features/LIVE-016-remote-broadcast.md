@@ -9,12 +9,14 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 ## Scope
 
 - A scorer or tournament administrator creates a short-lived, match-specific broadcast PIN.
+- The generated PIN is displayed prominently and cached locally to prefill the Broadcast screen on the same device.
 - A second Android device enters the match PIN, then selects either direct YouTube RTMPS or a remotely reachable RTMPS/RTMP ingest for OBS.
 - The YouTube stream key is entered manually on the broadcast device and is never sent to the SportSync API or persisted.
 - Direct YouTube mode burns a compact live score strip into the outgoing video.
 - OBS mode sends camera and microphone without a burned score strip. OBS uses a separate browser-source overlay URL for current score data.
 - The overlay URL is keyed by an unguessable read-only token and can be revoked/rotated.
 - Camera and microphone permission are requested only on the broadcaster device.
+- Camera and microphone encoders are prepared before preview begins, and the score overlay is attached before publishing starts.
 
 ## Rules and invariants
 
