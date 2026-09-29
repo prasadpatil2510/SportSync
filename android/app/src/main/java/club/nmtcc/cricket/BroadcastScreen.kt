@@ -7,7 +7,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.util.TypedValue
 import android.view.SurfaceHolder
 import android.view.Gravity
 import android.view.View
@@ -15,6 +18,8 @@ import android.view.WindowManager
 import android.graphics.drawable.GradientDrawable
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -44,6 +49,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.URL
 
 private enum class BroadcastMode { YOUTUBE, REMOTE_OBS }
 private const val PERMANENT_TEST_BROADCAST_PIN = "301022"
@@ -75,6 +81,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var prepared by remember { mutableStateOf(false) }
     var surfaceReady by remember { mutableStateOf(false) }
     var openGlView by remember { mutableStateOf<OpenGlView?>(null) }
+    val logoCache = remember { mutableMapOf<String, Bitmap?>() }
     val checker = remember { object : ConnectChecker {
         override fun onConnectionStarted(url: String) { message = "Connecting…" }
         override fun onConnectionSuccess() { message = "Broadcast connected"; streaming = true }
@@ -120,11 +127,13 @@ fun BroadcastScreen(onBack: () -> Unit) {
     LaunchedEffect(snapshot, mode, prepared, stream) {
         val score = snapshot ?: return@LaunchedEffect
         if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
+            val battingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.battingTeamLogo, logoCache) }
+            val bowlingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.bowlingTeamLogo, logoCache) }
             val filter = ViewFilterRender()
             stream.getGlInterface().setFilter(filter)
-            filter.view = createEncodedScorebar(context, score)
-            filter.setScale(94f, 15f)
-            filter.setPosition(3f, 82f)
+            filter.view = createBroadcastOverlayCanvas(context, score, battingLogo, bowlingLogo)
+            filter.setScale(100f, 100f)
+            filter.setPosition(0f, 0f)
         }
     }
     LaunchedEffect(message) {
@@ -265,52 +274,84 @@ private fun prepareBroadcastPipeline(stream: RtmpStream): Boolean {
     return true
 }
 
-private fun createEncodedScorebar(context: Context, score: BroadcastSnapshot): View {
-    fun rounded(color: Int, radius: Float = 52f) = GradientDrawable().apply {
+private fun loadBroadcastLogo(url: String, cache: MutableMap<String, Bitmap?>): Bitmap? {
+    if (url.isBlank()) return null
+    if (cache.containsKey(url)) return cache[url]
+    val bitmap = runCatching {
+        URL(url).openConnection().apply { connectTimeout = 5_000; readTimeout = 5_000 }
+            .getInputStream().use(BitmapFactory::decodeStream)
+    }.getOrNull()
+    cache[url] = bitmap
+    return bitmap
+}
+
+private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnapshot, battingLogo: Bitmap?, bowlingLogo: Bitmap?): View {
+    fun rounded(color: Int, radius: Float = 56f) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = radius
     }
-    fun label(text: String, size: Float, color: Int, bold: Boolean = false) = TextView(context).apply {
+    fun label(text: String, sizePx: Float, color: Int, bold: Boolean = false, horizontalGravity: Int = Gravity.START) = TextView(context).apply {
         this.text = text
-        textSize = size
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, sizePx)
         setTextColor(color)
-        gravity = Gravity.CENTER_VERTICAL
+        gravity = Gravity.CENTER_VERTICAL or horizontalGravity
         maxLines = 1
         if (bold) setTypeface(typeface, Typeface.BOLD)
     }
-    fun column(primary: String, secondary: String, width: Int, horizontalGravity: Int) = LinearLayout(context).apply {
+    fun column(primary: String, secondary: String, width: Int) = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_VERTICAL
-        setPadding(24, 0, 24, 0)
-        addView(label(primary, 24f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52).apply { gravity = horizontalGravity })
-        addView(label(secondary, 15f, AndroidColor.rgb(102, 112, 133)), LinearLayout.LayoutParams(width, 34).apply { gravity = horizontalGravity })
+        setPadding(18, 0, 18, 0)
+        addView(label(primary, 27f, AndroidColor.rgb(10, 23, 58), true), LinearLayout.LayoutParams(width, 52))
+        addView(label(secondary, 21f, AndroidColor.rgb(69, 79, 99)), LinearLayout.LayoutParams(width, 44))
     }
-
-    val root = LinearLayout(context).apply {
+    fun teamLogo(bitmap: Bitmap?) = ImageView(context).apply {
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(8, 8, 8, 8)
+        if (bitmap != null) setImageBitmap(bitmap)
+    }
+    val scorebar = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         background = rounded(AndroidColor.rgb(242, 242, 242))
-        layoutParams = LinearLayout.LayoutParams(1800, 162)
     }
-    root.addView(
-        column("🏏 ${score.striker.firstName()}  •  ${score.nonStriker.firstName()}", "STRIKER  •  NON-STRIKER", 620, Gravity.START),
-        LinearLayout.LayoutParams(620, 162)
+    scorebar.addView(teamLogo(battingLogo), LinearLayout.LayoutParams(96, 112))
+    scorebar.addView(
+        column("🏏 ${score.striker.firstName()}", score.nonStriker.firstName(), 520),
+        LinearLayout.LayoutParams(520, 112)
     )
-    root.addView(LinearLayout(context).apply {
+    scorebar.addView(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         background = rounded(AndroidColor.rgb(9, 31, 98))
-        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 32f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(560, 88).apply { gravity = Gravity.CENTER })
-        addView(label("${score.teamA}  vs  ${score.teamB}", 17f, AndroidColor.rgb(183, 192, 218)), LinearLayout.LayoutParams(560, 44).apply { gravity = Gravity.CENTER })
-    }, LinearLayout.LayoutParams(560, 162))
-    root.addView(
-        column(score.bowler.firstName(), "THIS OVER  —", 620, Gravity.START),
-        LinearLayout.LayoutParams(620, 162)
+        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 34f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(548, 62))
+        addView(label("${score.teamA}  vs  ${score.teamB}", 18f, AndroidColor.rgb(183, 192, 218), horizontalGravity = Gravity.CENTER), LinearLayout.LayoutParams(548, 38))
+    }, LinearLayout.LayoutParams(548, 112))
+    scorebar.addView(
+        column(score.bowler.firstName(), "THIS OVER  —", 520),
+        LinearLayout.LayoutParams(520, 112)
     )
-    root.measure(
-        View.MeasureSpec.makeMeasureSpec(1800, View.MeasureSpec.EXACTLY),
-        View.MeasureSpec.makeMeasureSpec(162, View.MeasureSpec.EXACTLY)
+    scorebar.addView(teamLogo(bowlingLogo), LinearLayout.LayoutParams(96, 112))
+
+    val canvas = FrameLayout(context).apply {
+        setBackgroundColor(AndroidColor.TRANSPARENT)
+        layoutParams = FrameLayout.LayoutParams(COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
+        addView(scorebar, FrameLayout.LayoutParams(1780, 112).apply {
+            leftMargin = 70
+            topMargin = 926
+        })
+        addView(ImageView(context).apply {
+            setImageResource(R.drawable.nmtcc_logo_transparent)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+        }, FrameLayout.LayoutParams(132, 132, Gravity.TOP or Gravity.END).apply {
+            topMargin = 42
+            rightMargin = 54
+        })
+    }
+    canvas.measure(
+        View.MeasureSpec.makeMeasureSpec(COMPOSITION_WIDTH, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(COMPOSITION_HEIGHT, View.MeasureSpec.EXACTLY)
     )
-    root.layout(0, 0, 1800, 162)
-    return root
+    canvas.layout(0, 0, COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
+    return canvas
 }

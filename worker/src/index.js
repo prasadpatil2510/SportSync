@@ -73,8 +73,8 @@ async function list(env, table) {
 }
 
 async function matchView(env, matchId) {
-  const match = await env.DB.prepare(`SELECT m.*,a.name team_a_name,b.name team_b_name,
-    tw.name toss_winner_name,bt.name batting_team_name,bw.name bowling_team_name
+  const match = await env.DB.prepare(`SELECT m.*,a.name team_a_name,a.logo_url team_a_logo_url,b.name team_b_name,b.logo_url team_b_logo_url,
+    tw.name toss_winner_name,bt.name batting_team_name,bt.logo_url batting_team_logo_url,bw.name bowling_team_name,bw.logo_url bowling_team_logo_url
     FROM matches m JOIN teams a ON a.id=m.team_a_id JOIN teams b ON b.id=m.team_b_id
     LEFT JOIN teams tw ON tw.id=m.toss_winner_id LEFT JOIN teams bt ON bt.id=m.batting_team_id
     LEFT JOIN teams bw ON bw.id=m.bowling_team_id WHERE m.id=?`).bind(matchId).first();
