@@ -24,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,7 +70,7 @@ private val Page: Color @Composable get() = LocalBrandPalette.current.page
 private val Ink: Color @Composable get() = LocalBrandPalette.current.ink
 private val Muted: Color @Composable get() = LocalBrandPalette.current.muted
 
-private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, SCHEDULE_MATCHES, LINEUP, LIVE_LINEUP, TOSS, SCORE }
+private enum class Screen { HOME, CREATE_TOURNAMENT, TOURNAMENT, ADD_TEAM, TEAM, EDIT_TEAM, ADD_PLAYER, ADD_EXISTING_PLAYER, CREATE_MATCH, SCHEDULE_MATCHES, LINEUP, LIVE_LINEUP, TOSS, SCORE, USERS, BROADCAST }
 
 @Composable
 fun NmtccApp() {
@@ -79,14 +81,37 @@ fun NmtccApp() {
     val selectTheme: (AppTheme) -> Unit = { choice -> selectedTheme = choice; preferences.edit().putString("theme", choice.name).apply() }
     val scheme = if (palette.isDark) darkColorScheme(primary = palette.primary, secondary = palette.action, background = palette.page, surface = palette.surface, onPrimary = Color.Black, onSecondary = Color.Black, onBackground = palette.ink, onSurface = palette.ink)
     else lightColorScheme(primary = palette.primary, secondary = palette.action, background = palette.page, surface = palette.surface, onPrimary = Color.White, onSecondary = Color.White, onBackground = palette.ink, onSurface = palette.ink)
-    CompositionLocalProvider(LocalBrandPalette provides palette, LocalThemeChoice provides (selectedTheme to selectTheme)) {
+    val density = LocalDensity.current
+    CompositionLocalProvider(LocalBrandPalette provides palette, LocalThemeChoice provides (selectedTheme to selectTheme), LocalDensity provides Density(density.density, density.fontScale * .88f)) {
     MaterialTheme(colorScheme = scheme) {
-        var organiserPin by remember { mutableStateOf<String?>(null) }
-        if (organiserPin == null) {
-            OrganiserLoginScreen { organiserPin = it }
+        var session by remember { mutableStateOf<AuthSession?>(null) }
+        var checkingSession by remember { mutableStateOf(true) }
+        var authAttempt by remember { mutableIntStateOf(0) }
+        LaunchedEffect(authAttempt) {
+            if (BuildConfig.TEST_AUTH_BYPASS) {
+                runCatching { withContext(Dispatchers.IO) { CloudApi().testingSession() } }
+                    .onSuccess { session = it }
+            } else {
+                val token = preferences.getString("auth-token", "").orEmpty()
+                if (token.isNotBlank()) runCatching { withContext(Dispatchers.IO) { CloudApi(authToken = token).me() } }
+                    .onSuccess { session = AuthSession(token, "", it) }
+                    .onFailure { preferences.edit().remove("auth-token").apply() }
+            }
+            checkingSession = false
+        }
+        if (checkingSession) { Box(Modifier.fillMaxSize().background(Page), contentAlignment = Alignment.Center) { CircularProgressIndicator() }; return@MaterialTheme }
+        if (session == null && BuildConfig.TEST_AUTH_BYPASS) {
+            TestingAccessError(onRetry = { checkingSession = true; authAttempt++ })
             return@MaterialTheme
         }
-        val api = remember(organiserPin) { CloudApi(writeToken = organiserPin!!) }
+        if (session == null) {
+            AuthenticationScreen { authenticated -> session = authenticated; preferences.edit().putString("auth-token", authenticated.token).apply() }
+            return@MaterialTheme
+        }
+        val currentSession = session!!
+        val canManage = currentSession.user.role == AppRole.TOURNAMENT_ADMIN
+        val canScore = currentSession.user.role == AppRole.SCORER || canManage
+        val api = remember(currentSession.token) { CloudApi(authToken = currentSession.token) }
         var screen by remember { mutableStateOf(Screen.HOME) }
         var tournament by remember { mutableStateOf<Tournament?>(null) }
         var team by remember { mutableStateOf<Team?>(null) }
@@ -95,11 +120,11 @@ fun NmtccApp() {
         var refresh by remember { mutableIntStateOf(0) }
         Surface(Modifier.fillMaxSize(), color = Page) {
             when (screen) {
-                Screen.HOME -> TournamentListScreen(api, refresh, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onOpen = { tournament = it; returnHome=false; screen = Screen.TOURNAMENT }, onTeam = { team=it; returnHome=true; screen=Screen.TEAM }, onMatch = { cricketMatch=it; returnHome=true; screen=if(it.status=="SCHEDULED")Screen.LINEUP else Screen.SCORE })
+                Screen.HOME -> TournamentListScreen(api, refresh, currentSession.user, canManage, showSessionControls = !BuildConfig.TEST_AUTH_BYPASS, onCreate = { screen = Screen.CREATE_TOURNAMENT }, onUsers = { screen = Screen.USERS }, onBroadcast = { screen = Screen.BROADCAST }, onLogout = { runCatching { api.logout() }; preferences.edit().remove("auth-token").apply(); session = null }, onOpen = { tournament = it; returnHome=false; screen = Screen.TOURNAMENT }, onTeam = { team=it; returnHome=true; screen=Screen.TEAM }, onMatch = { cricketMatch=it; returnHome=true; screen=if(it.status=="SCHEDULED"&&canScore)Screen.LINEUP else Screen.SCORE })
                 Screen.CREATE_TOURNAMENT -> CreateTournamentScreen(api, onBack = { screen = Screen.HOME }, onCreated = { tournament = it; refresh++; screen = Screen.TOURNAMENT })
-                Screen.TOURNAMENT -> TournamentScreen(api, tournament!!, refresh, onBack = { refresh++; screen = Screen.HOME }, onAddTeam = { screen = Screen.ADD_TEAM }, onTeam = { team = it; returnHome=false; screen = Screen.TEAM }, onNewMatch = { screen = Screen.CREATE_MATCH }, onSchedule = { screen=Screen.SCHEDULE_MATCHES }, onMatch = { cricketMatch = it; returnHome=false; screen = if (it.status == "SCHEDULED") Screen.LINEUP else Screen.SCORE })
+                Screen.TOURNAMENT -> TournamentScreen(api, tournament!!, refresh, canManage, canScore, onBack = { refresh++; screen = Screen.HOME }, onAddTeam = { screen = Screen.ADD_TEAM }, onTeam = { team = it; returnHome=false; screen = Screen.TEAM }, onNewMatch = { screen = Screen.CREATE_MATCH }, onSchedule = { screen=Screen.SCHEDULE_MATCHES }, onMatch = { cricketMatch = it; returnHome=false; screen = if (it.status == "SCHEDULED"&&canScore) Screen.LINEUP else Screen.SCORE })
                 Screen.ADD_TEAM -> AddTeamScreen(api, tournament!!, onBack = { screen = Screen.TOURNAMENT }, onCreated = { refresh++; screen = Screen.TOURNAMENT })
-                Screen.TEAM -> TeamScreen(api, team!!, refresh, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onEditTeam = { screen = Screen.EDIT_TEAM }, onAddPlayer = { screen = Screen.ADD_PLAYER }, onAddExisting = { screen = Screen.ADD_EXISTING_PLAYER }, onChanged = { refresh++ })
+                Screen.TEAM -> TeamScreen(api, team!!, refresh, canManage, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onEditTeam = { screen = Screen.EDIT_TEAM }, onAddPlayer = { screen = Screen.ADD_PLAYER }, onAddExisting = { screen = Screen.ADD_EXISTING_PLAYER }, onChanged = { refresh++ })
                 Screen.EDIT_TEAM -> EditTeamScreen(api, team!!, onBack = { screen = Screen.TEAM }, onSaved = { team = it; refresh++; screen = Screen.TEAM })
                 Screen.ADD_PLAYER -> AddPlayerScreen(api, team!!, onBack = { screen = Screen.TEAM }, onCreated = { refresh++; screen = Screen.TEAM })
                 Screen.ADD_EXISTING_PLAYER -> AddExistingPlayerScreen(api, team!!, onBack = { screen = Screen.TEAM }, onAdded = { refresh++; screen = Screen.TEAM })
@@ -108,7 +133,9 @@ fun NmtccApp() {
                 Screen.LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onSaved = { screen = Screen.TOSS })
                 Screen.LIVE_LINEUP -> LineupScreen(api, cricketMatch!!, onBack = { screen = Screen.SCORE }, onSaved = { screen = Screen.SCORE }, liveEdit = true)
                 Screen.TOSS -> TossScreen(api, cricketMatch!!, onBack = { screen = Screen.LINEUP }, onStarted = { cricketMatch = it; screen = Screen.SCORE })
-                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onUpdated = { cricketMatch = it })
+                Screen.SCORE -> ScoringScreen(api, cricketMatch!!, canScore = canScore, onBack = { refresh++; screen = if(returnHome)Screen.HOME else Screen.TOURNAMENT }, onUpdated = { cricketMatch = it })
+                Screen.USERS -> UserManagementScreen(api, onBack = { screen = Screen.HOME })
+                Screen.BROADCAST -> BroadcastScreen(onBack = { screen = Screen.HOME })
             }
         }
     }
@@ -116,8 +143,25 @@ fun NmtccApp() {
 }
 
 @Composable
-private fun OrganiserLoginScreen(onAuthenticated: (String) -> Unit) {
+private fun TestingAccessError(onRetry: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Page)) {
+        AppHeader("SportSync Cricket", back = false)
+        Box(Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Scoring test is temporarily unavailable", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text("Check your internet connection and try again.", color = Muted, modifier = Modifier.padding(vertical = 12.dp))
+                Button(onClick = onRetry, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("RETRY") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuthenticationScreen(onAuthenticated: (AuthSession) -> Unit) {
     val scope = rememberCoroutineScope()
+    var registerMode by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -127,11 +171,14 @@ private fun OrganiserLoginScreen(onAuthenticated: (String) -> Unit) {
             val theme = LocalThemeChoice.current.first
             Image(painter = painterResource(if (theme == AppTheme.DARK_GOLD) R.drawable.sportsync_logo_dark_gold else R.drawable.sportsync_logo_classic), contentDescription = "SportSync", modifier = Modifier.fillMaxWidth().height(105.dp).padding(horizontal = 8.dp))
             Spacer(Modifier.height(22.dp))
-            Text("Organiser access", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Enter your testing PIN to manage tournaments, teams and players.", color = Muted, modifier = Modifier.padding(vertical = 12.dp))
+            Text(if(registerMode) "Create player account" else "Sign in", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(if(registerMode) "Register to follow teams, matches and your cricket statistics." else "Players, scorers and tournament admins use the same secure sign-in.", color = Muted, modifier = Modifier.padding(vertical = 12.dp))
+            if(registerMode) OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Your name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = email, onValueChange = { email = it.trim() }, label = { Text(if(registerMode) "Email" else "Email or admin") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top=10.dp))
             OutlinedTextField(value = pin, onValueChange = { if (it.length <= 8 && it.all(Char::isDigit)) pin = it }, label = { Text("4–8 digit PIN") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 10.dp))
-            Button(onClick = { checking = true; error = null; scope.launch { val accepted = withContext(Dispatchers.IO) { CloudApi(writeToken = pin).adminAccess() }; if (accepted) onAuthenticated(pin) else error = "Incorrect organiser PIN"; checking = false } }, enabled = pin.length >= 4 && !checking, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal), modifier = Modifier.fillMaxWidth().padding(top = 20.dp).height(54.dp)) { Text(if (checking) "CHECKING…" else "CONTINUE") }
+            Button(onClick = { checking = true; error = null; scope.launch { runCatching { withContext(Dispatchers.IO) { if(registerMode) CloudApi().register(name,email,pin) else CloudApi().login(email,pin) } }.onSuccess(onAuthenticated).onFailure { error=it.message }; checking=false } }, enabled = pin.length >= 4 && email.isNotBlank() && (!registerMode || name.isNotBlank()) && !checking, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal), modifier = Modifier.fillMaxWidth().padding(top = 20.dp).height(54.dp)) { Text(if (checking) "CHECKING…" else if(registerMode) "CREATE PLAYER ACCOUNT" else "SIGN IN") }
+            TextButton(onClick={registerMode=!registerMode;error=null},modifier=Modifier.padding(top=8.dp)){Text(if(registerMode)"Already registered? Sign in" else "New player? Create an account")}
         }
     }
 }
@@ -144,7 +191,9 @@ private fun AppHeader(title: String, back: Boolean = true, onBack: () -> Unit = 
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(72.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             if (back) Text("‹", color = Color.White, fontSize = 48.sp, modifier = Modifier.width(48.dp).clickable { onBack() })
             else Text("☰", color = Color.White, fontSize = 28.sp, modifier = Modifier.width(48.dp))
-            Text(title, color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (!back && title == "SportSync Cricket") {
+                Image(painter = painterResource(if (theme == AppTheme.DARK_GOLD) R.drawable.sportsync_logo_dark_gold else R.drawable.sportsync_logo_classic), contentDescription = "SportSync", contentScale = ContentScale.Fit, modifier = Modifier.weight(1f).height(42.dp))
+            } else Text(title, color = Color.White, fontSize = 25.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             Box {
                 Text(if (theme == AppTheme.DARK_GOLD) "◆" else "●", color = if (theme == AppTheme.DARK_GOLD) Color(0xFFFFE28A) else Color.White, fontSize = 24.sp, modifier = Modifier.padding(10.dp).clickable { themeMenu = true })
                 DropdownMenu(expanded = themeMenu, onDismissRequest = { themeMenu = false }) {
@@ -157,7 +206,7 @@ private fun AppHeader(title: String, back: Boolean = true, onBack: () -> Unit = 
 }
 
 @Composable
-private fun TournamentListScreen(api: CloudApi, refresh: Int, onCreate: () -> Unit, onOpen: (Tournament) -> Unit, onTeam:(Team)->Unit, onMatch:(CricketMatch)->Unit) {
+private fun TournamentListScreen(api: CloudApi, refresh: Int, user:AppUser, canManage:Boolean, showSessionControls:Boolean, onCreate: () -> Unit, onUsers:()->Unit, onBroadcast:()->Unit, onLogout:()->Unit, onOpen: (Tournament) -> Unit, onTeam:(Team)->Unit, onMatch:(CricketMatch)->Unit) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -172,10 +221,11 @@ private fun TournamentListScreen(api: CloudApi, refresh: Int, onCreate: () -> Un
     }
     Column(Modifier.fillMaxSize()) {
         AppHeader("SportSync Cricket", back = false)
+        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal=14.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){if(showSessionControls)Column(Modifier.weight(1f)){Text(user.displayName,fontWeight=FontWeight.SemiBold);Text(user.role.name.replace('_',' ').lowercase().replaceFirstChar{it.uppercase()},fontSize=11.sp,color=ActionTeal)}else Spacer(Modifier.weight(1f));TextButton(onClick=onBroadcast){Text("BROADCAST")};if(canManage&&showSessionControls)TextButton(onClick=onUsers){Text("USERS")};if(showSessionControls)TextButton(onClick=onLogout){Text("SIGN OUT")}}
         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(14.dp), horizontalArrangement = Arrangement.SpaceAround) {
             listOf("Matches", "Tournaments", "Teams", "Stats").forEach { item->Text(item, color = if (item == tab) AppRed else Ink, fontWeight = if (item == tab) FontWeight.Bold else FontWeight.Normal,modifier=Modifier.clickable{tab=item}.padding(6.dp)) }
         }
-        if(tab=="Tournaments")Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        if(tab=="Tournaments"&&canManage)Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Want to host a tournament?", fontSize = 18.sp, modifier = Modifier.weight(1f))
             Button(onClick = onCreate, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("Register") }
         }
@@ -239,7 +289,7 @@ private fun CreateTournamentScreen(api: CloudApi, onBack: () -> Unit, onCreated:
 }
 
 @Composable
-private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int, onBack: () -> Unit, onAddTeam: () -> Unit, onTeam: (Team) -> Unit, onNewMatch: () -> Unit, onSchedule:()->Unit, onMatch: (CricketMatch) -> Unit) {
+private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int, canManage:Boolean, canScore:Boolean, onBack: () -> Unit, onAddTeam: () -> Unit, onTeam: (Team) -> Unit, onNewMatch: () -> Unit, onSchedule:()->Unit, onMatch: (CricketMatch) -> Unit) {
     val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf("Teams") }; var teams by remember { mutableStateOf(emptyList<Team>()) }; var matches by remember { mutableStateOf(emptyList<CricketMatch>()) }; var loading by remember { mutableStateOf(true) }
     var importing by remember { mutableStateOf(false) }; var importMessage by remember { mutableStateOf<String?>(null) }; var localRefresh by remember { mutableIntStateOf(0) };var auctionReference by remember{mutableStateOf(tournament.auctionReference)};var points by remember{mutableStateOf(emptyList<PointRow>())};var auctions by remember{mutableStateOf(emptyList<AuctionOption>())}
@@ -259,15 +309,15 @@ private fun TournamentScreen(api: CloudApi, tournament: Tournament, refresh: Int
             }
         }
         if (tab == "Matches" && loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        else if (tab == "Matches" && matches.isEmpty()) Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("No matches yet",fontSize=25.sp,fontWeight=FontWeight.Bold);Text("Start one now or generate a complete standard schedule.",color=Muted,modifier=Modifier.padding(vertical=16.dp));Button(onClick=onNewMatch,colors=ButtonDefaults.buttonColors(containerColor=ActionTeal),modifier=Modifier.fillMaxWidth()){Text("START A MATCH")};OutlinedButton(onClick=onSchedule,modifier=Modifier.fillMaxWidth().padding(top=10.dp)){Text("SCHEDULE MATCHES")}}
-        else if (tab == "Matches") Box(Modifier.fillMaxSize()) { LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(matches,key={it.id}){item->MatchCard(item){onMatch(item)}}}; Button(onClick=onNewMatch,modifier=Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(20.dp),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text("＋  Start a match")} }
+        else if (tab == "Matches" && matches.isEmpty()) Column(Modifier.fillMaxSize().padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Text("No matches yet",fontSize=25.sp,fontWeight=FontWeight.Bold);Text(if(canManage)"Start one now or generate a complete standard schedule." else "The tournament admin has not created any matches yet.",color=Muted,modifier=Modifier.padding(vertical=16.dp));if(canManage){Button(onClick=onNewMatch,colors=ButtonDefaults.buttonColors(containerColor=ActionTeal),modifier=Modifier.fillMaxWidth()){Text("START A MATCH")};OutlinedButton(onClick=onSchedule,modifier=Modifier.fillMaxWidth().padding(top=10.dp)){Text("SCHEDULE MATCHES")}}}
+        else if (tab == "Matches") Box(Modifier.fillMaxSize()) { LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){items(matches,key={it.id}){item->MatchCard(item){onMatch(item)}}}; if(canManage)Button(onClick=onNewMatch,modifier=Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(20.dp),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text("＋  Start a match")} }
         else if(tab=="Points Table") PointsTableView(points)
         else if (tab != "Teams") EmptyState(tab, "Results from completed matches will appear here.", "VIEW MATCHES") { tab = "Matches" }
         else if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         else if (teams.isEmpty()) EmptyState("Invite Captains to Add Teams", "Share an invitation later, or add teams manually now.", "ADD MANUALLY", onAddTeam)
         else Box(Modifier.fillMaxSize()) {
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { items(teams, key = { it.id }) { TeamCard(it) { onTeam(it) } } }
-            Button(onClick = onAddTeam, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(20.dp), colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("＋  Add teams", fontSize = 18.sp) }
+            if(canManage)Button(onClick = onAddTeam, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(20.dp), colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("＋  Add teams", fontSize = 18.sp) }
         }
     }
 }
@@ -289,15 +339,15 @@ private fun AddTeamScreen(api: CloudApi, tournament: Tournament, onBack: () -> U
 }
 
 @Composable
-private fun TeamScreen(api: CloudApi, team: Team, refresh: Int, onBack: () -> Unit, onEditTeam: () -> Unit, onAddPlayer: () -> Unit, onAddExisting: () -> Unit, onChanged: () -> Unit) {
+private fun TeamScreen(api: CloudApi, team: Team, refresh: Int, canManage:Boolean, onBack: () -> Unit, onEditTeam: () -> Unit, onAddPlayer: () -> Unit, onAddExisting: () -> Unit, onChanged: () -> Unit) {
     val scope = rememberCoroutineScope()
     var players by remember { mutableStateOf(emptyList<Player>()) }; var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(team.id, refresh) { loading = true; players = runCatching { withContext(Dispatchers.IO) { api.teamPlayers(team.id) } }.getOrDefault(emptyList()); loading = false }
-    Column(Modifier.fillMaxSize()) { AppHeader(team.name, onBack = onBack); Surface(color = ActionTeal) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) { Text("Build your complete squad", color = Color.White, modifier = Modifier.weight(1f)); TextButton(onClick = onEditTeam) { Text("EDIT TEAM", color = Color.White, fontWeight = FontWeight.Bold) } } }
+    Column(Modifier.fillMaxSize()) { AppHeader(team.name, onBack = onBack); Surface(color = ActionTeal) { Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) { Text(if(canManage)"Build your complete squad" else "Team squad", color = Color.White, modifier = Modifier.weight(1f)); if(canManage)TextButton(onClick = onEditTeam) { Text("EDIT TEAM", color = Color.White, fontWeight = FontWeight.Bold) } } }
         if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp))
-        if (loading) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { items(players, key = { it.id }) { player -> PlayerCard(player, onRemove = { scope.launch { runCatching { withContext(Dispatchers.IO) { api.removePlayerFromTeam(team.id, player.id) } }.onSuccess { onChanged() }.onFailure { error = it.message } } }) } }
-        Row(Modifier.fillMaxWidth()) { OutlinedButton(onClick = onAddExisting, modifier = Modifier.weight(1f).height(64.dp), shape = RoundedCornerShape(0.dp)) { Text("ADD EXISTING") }; Button(onClick = onAddPlayer, modifier = Modifier.weight(1f).height(64.dp), shape = RoundedCornerShape(0.dp), colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("NEW PLAYER", fontSize = 16.sp) } }
+        if (loading) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { items(players, key = { it.id }) { player -> PlayerCard(player, onRemove = if (canManage) ({ scope.launch { runCatching { withContext(Dispatchers.IO) { api.removePlayerFromTeam(team.id, player.id) } }.onSuccess { onChanged() }.onFailure { error = it.message } } }) else null) } }
+        if(canManage)Row(Modifier.fillMaxWidth()) { OutlinedButton(onClick = onAddExisting, modifier = Modifier.weight(1f).height(64.dp), shape = RoundedCornerShape(0.dp)) { Text("ADD EXISTING") }; Button(onClick = onAddPlayer, modifier = Modifier.weight(1f).height(64.dp), shape = RoundedCornerShape(0.dp), colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text("NEW PLAYER", fontSize = 16.sp) } }
     }
 }
 
@@ -334,22 +384,27 @@ private fun EditTeamScreen(api: CloudApi, team: Team, onBack: () -> Unit, onSave
 private fun AddExistingPlayerScreen(api: CloudApi, team: Team, onBack: () -> Unit, onAdded: () -> Unit) {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(true) }; var allPlayers by remember { mutableStateOf(emptyList<Player>()) }; var teamPlayerIds by remember { mutableStateOf(emptySet<String>()) }
-    var addingId by remember { mutableStateOf<String?>(null) }; var error by remember { mutableStateOf<String?>(null) }
+    var selectedIds by remember { mutableStateOf(emptySet<String>()) }; var saving by remember { mutableStateOf(false) }; var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(team.id) {
         loading = true
         runCatching { withContext(Dispatchers.IO) { api.players() to api.teamPlayers(team.id).map { it.id }.toSet() } }.onSuccess { allPlayers = it.first; teamPlayerIds = it.second }.onFailure { error = it.message }
         loading = false
     }
     Column(Modifier.fillMaxSize()) {
-        AppHeader("Add existing player", onBack = onBack)
-        Text("Choose a saved player to add to ${team.name}.", color = Muted, modifier = Modifier.padding(16.dp))
+        AppHeader("Add existing players", onBack = onBack)
+        val available = allPlayers.filterNot { teamPlayerIds.contains(it.id) }
+        Text("Select one or more saved players for ${team.name}.", color = Muted, modifier = Modifier.padding(horizontal=16.dp,vertical=10.dp))
+        if(!loading)Row(Modifier.fillMaxWidth().padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically){Text("${selectedIds.size} selected",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));TextButton(onClick={selectedIds=available.map{it.id}.toSet()},enabled=available.isNotEmpty()&&!saving){Text("SELECT ALL")};TextButton(onClick={selectedIds=emptySet()},enabled=selectedIds.isNotEmpty()&&!saving){Text("CLEAR")}}
         if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
         if (loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(allPlayers.filterNot { teamPlayerIds.contains(it.id) }, key = { it.id }) { player ->
-                Card(Modifier.fillMaxWidth()) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Avatar(player.name, 56); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(player.name, fontWeight = FontWeight.SemiBold); Text(player.role.replace('_', ' '), color = Muted) }; Button(onClick = { addingId = player.id; scope.launch { runCatching { withContext(Dispatchers.IO) { api.addPlayerToTeam(team.id, player.id) } }.onSuccess { onAdded() }.onFailure { error = it.message }; addingId = null } }, enabled = addingId == null, colors = ButtonDefaults.buttonColors(containerColor = ActionTeal)) { Text(if (addingId == player.id) "…" else "ADD") } } }
+            if(available.isEmpty())item{EmptyState("No players available","Every saved player is already in this team.","BACK",onBack)}
+            items(available, key = { it.id }) { player ->
+                val selected=selectedIds.contains(player.id)
+                Card(Modifier.fillMaxWidth().clickable(enabled=!saving){selectedIds=if(selected)selectedIds-player.id else selectedIds+player.id},colors=CardDefaults.cardColors(containerColor=if(selected)ActionTeal.copy(alpha=.12f)else MaterialTheme.colorScheme.surface)) { Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) { Checkbox(checked=selected,onCheckedChange={checked->selectedIds=if(checked)selectedIds+player.id else selectedIds-player.id},enabled=!saving);Spacer(Modifier.width(6.dp)); Avatar(player.name, 56); Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text(player.name, fontWeight = FontWeight.SemiBold); Text(player.role.replace('_', ' '), color = Muted) } } }
             }
         }
+        Button(onClick={val ids=selectedIds.toList();saving=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){ids.forEach{api.addPlayerToTeam(team.id,it)}}}.onSuccess{onAdded()}.onFailure{error=it.message};saving=false}},enabled=selectedIds.isNotEmpty()&&!saving,modifier=Modifier.fillMaxWidth().height(64.dp),shape=RoundedCornerShape(0.dp),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text(if(saving)"ADDING ${selectedIds.size}…" else "ADD ${selectedIds.size} PLAYER${if(selectedIds.size==1)"" else "S"}")}
     }
 }
 
@@ -406,15 +461,52 @@ private fun TossScreen(api: CloudApi, match: CricketMatch, onBack:()->Unit, onSt
 @Composable private fun PlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){Column(verticalArrangement=Arrangement.spacedBy(7.dp)){Text(title,fontWeight=FontWeight.Bold);players.forEach{p->Surface(color=if(p.id==selected)Color(0xFFD9F2F0) else Color.White,shape=RoundedCornerShape(5.dp),modifier=Modifier.fillMaxWidth().border(1.dp,if(p.id==selected)ActionTeal else Color.LightGray,RoundedCornerShape(5.dp)).clickable{onSelect(p.id)}){Row(Modifier.padding(11.dp)){Text(p.name,modifier=Modifier.weight(1f));if(p.id==selected)Text("✓",color=ActionTeal)}}}}}
 
 @Composable private fun DropdownChoice(title:String,options:List<String>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth()){Text(selected.replace('_',' '),modifier=Modifier.weight(1f));Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){options.forEach{option->DropdownMenuItem(text={Text(option.replace('_',' '))},onClick={open=false;onSelect(option)})}}}}}
-@Composable private fun DropdownPlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};val label=players.find{it.id==selected}?.name?:"Select player";Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth(),enabled=players.isNotEmpty()){Text(label,modifier=Modifier.weight(1f));Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){players.forEach{player->DropdownMenuItem(text={Text(player.name)},onClick={open=false;onSelect(player.id)})}}}}}
+@Composable private fun DropdownPlayerSelector(title:String,players:List<Player>,selected:String,onSelect:(String)->Unit){var open by remember{mutableStateOf(false)};val chosen=players.find{it.id==selected};val label=chosen?.let{it.name+(if(it.sourceTeamName.isNotBlank())" — ${it.sourceTeamName}" else "") }?:"Select player";Column{Text(title,fontWeight=FontWeight.Bold);Box{OutlinedButton(onClick={open=true},modifier=Modifier.fillMaxWidth(),enabled=players.isNotEmpty()){Text(label,modifier=Modifier.weight(1f),maxLines=1,overflow=TextOverflow.Ellipsis);Text("▾")};DropdownMenu(expanded=open,onDismissRequest={open=false}){players.forEach{player->DropdownMenuItem(text={Column{Text(player.name);if(player.sourceTeamName.isNotBlank())Text(player.sourceTeamName,fontSize=11.sp,color=Muted)}},onClick={open=false;onSelect(player.id)})}}}}}
 
 @Composable
-private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUpdated:(CricketMatch)->Unit){
+private fun UserManagementScreen(api:CloudApi,onBack:()->Unit){
+    val scope=rememberCoroutineScope()
+    var users by remember{mutableStateOf(emptyList<AppUser>())}
+    var refresh by remember{mutableIntStateOf(0)}
+    var loading by remember{mutableStateOf(true)}
+    var saving by remember{mutableStateOf(false)}
+    var name by remember{mutableStateOf("")}
+    var email by remember{mutableStateOf("")}
+    var pin by remember{mutableStateOf("")}
+    var role by remember{mutableStateOf(AppRole.PLAYER)}
+    var error by remember{mutableStateOf<String?>(null)}
+    LaunchedEffect(refresh){loading=true;runCatching{withContext(Dispatchers.IO){api.users()}}.onSuccess{users=it;error=null}.onFailure{error=it.message};loading=false}
+    Column(Modifier.fillMaxSize()){
+        AppHeader("Users & roles",onBack=onBack)
+        LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+            item{Card{Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("Create account",fontSize=19.sp,fontWeight=FontWeight.Bold)
+                Text("Players are read-only. Scorers can run matches. Tournament Admins manage everything.",color=Muted,fontSize=13.sp)
+                FormField("Name",name){name=it};FormField("Email",email){email=it.trim()}
+                OutlinedTextField(pin,{if(it.length<=8&&it.all(Char::isDigit))pin=it},label={Text("4–8 digit PIN")},singleLine=true,modifier=Modifier.fillMaxWidth())
+                DropdownChoice("Role",AppRole.entries.map{it.name},role.name){role=AppRole.valueOf(it)}
+                Button(onClick={saving=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){api.createUser(name,email,pin,role)}}.onSuccess{name="";email="";pin="";role=AppRole.PLAYER;refresh++}.onFailure{error=it.message};saving=false}},enabled=!saving&&name.isNotBlank()&&email.isNotBlank()&&pin.length>=4,modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text(if(saving)"CREATING…" else "CREATE USER")}
+            }}}
+            if(error!=null)item{Text(error!!,color=MaterialTheme.colorScheme.error)}
+            item{Text("Existing users",fontSize=19.sp,fontWeight=FontWeight.Bold)}
+            if(loading)item{Box(Modifier.fillMaxWidth().padding(24.dp),contentAlignment=Alignment.Center){CircularProgressIndicator()}}
+            items(users,key={it.id}){user->Card{Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                Text(user.displayName,fontWeight=FontWeight.Bold);Text(user.email,color=Muted,fontSize=12.sp)
+                DropdownChoice("Access role",AppRole.entries.map{it.name},user.role.name){selected->scope.launch{runCatching{withContext(Dispatchers.IO){api.updateUserRole(user.id,AppRole.valueOf(selected))}}.onSuccess{refresh++}.onFailure{error=it.message}}}
+            }}}
+        }
+    }
+}
+
+@Composable
+private fun ScoringScreen(api:CloudApi,initial:CricketMatch,canScore:Boolean,onBack:()->Unit,onUpdated:(CricketMatch)->Unit){
     val scope=rememberCoroutineScope()
     var match by remember{mutableStateOf(initial)};var lineup by remember{mutableStateOf(emptyList<Player>())};var deliveries by remember{mutableStateOf(emptyList<Delivery>())};var scorecard by remember{mutableStateOf(Scorecard(emptyList(),emptyList()))}
     var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf<String?>(null)};var generation by remember{mutableIntStateOf(0)};var showBowler by remember{mutableStateOf(false)};var showWicket by remember{mutableStateOf(false)};var extraTypeDialog by remember{mutableStateOf<String?>(null)};var showReplaceStriker by remember{mutableStateOf(false)}
     var mustChangeBowler by remember{mutableStateOf(false)};var syncedTick by remember{mutableIntStateOf(0)};var showSynced by remember{mutableStateOf(false)}
     var dismissal by remember{mutableStateOf("BOWLED")};var dismissedId by remember{mutableStateOf("")};var nextBatterId by remember{mutableStateOf("")};var fielderId by remember{mutableStateOf("")};var assistantFielderId by remember{mutableStateOf("")}
+    var showPlayerChange by remember{mutableStateOf(false)};var eligiblePlayers by remember{mutableStateOf(emptyList<Player>())};var loadingEligible by remember{mutableStateOf(false)}
+    var showBroadcastPin by remember{mutableStateOf(false)};var broadcastGrant by remember{mutableStateOf<BroadcastGrant?>(null)};var broadcastBusy by remember{mutableStateOf(false)}
     suspend fun snapshot(expected:Int):CricketMatch{val bundle=withContext(Dispatchers.IO){val fresh=api.match(match.id);val current=fresh.innings.lastOrNull();Triple(fresh,if(current!=null)api.deliveries(current.id)else emptyList(),if(current!=null)api.scorecard(current.id)else Scorecard(emptyList(),emptyList()))};if(generation==expected){match=bundle.first;deliveries=bundle.second;scorecard=bundle.third;onUpdated(bundle.first);val current=bundle.first.innings.lastOrNull();val waiting=bundle.first.status=="LIVE"&&current!=null&&current.legalBalls>0&&current.legalBalls%6==0&&bundle.second.firstOrNull()?.bowlerId==current.bowlerId;if(waiting){mustChangeBowler=true;showBowler=true}};return bundle.first}
     fun perform(onSuccess:(CricketMatch)->Unit={},action:()->Unit){generation++;val expected=generation;busy=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){action()};snapshot(expected)}.onSuccess{fresh->syncedTick++;onSuccess(fresh)}.onFailure{error=it.message};busy=false}}
     LaunchedEffect(match.id){lineup=runCatching{withContext(Dispatchers.IO){api.lineup(match.id)}}.getOrDefault(emptyList());while(true){val expected=generation;runCatching{snapshot(expected)}.onFailure{error=it.message};delay(2000)}}
@@ -424,26 +516,37 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
     fun recordDelivery(draft:DeliveryDraft){val before=inn?.legalBalls?:0;if(inn!=null)perform(onSuccess={fresh->val current=fresh.innings.lastOrNull();if(fresh.status=="LIVE"&&current!=null&&current.legalBalls>before&&current.legalBalls%6==0){mustChangeBowler=true;showBowler=true}}){api.addDelivery(inn.id,draft)}}
     val currentOverBalls=remember(deliveries){val chronological=deliveries.sortedBy{it.sequence};val afterLastBoundary=chronological.fold(emptyList<Delivery>() to 0){acc,ball->val next=acc.first+ball;val legal=acc.second+(if(ball.legal)1 else 0);if(legal==6)emptyList<Delivery>() to 0 else next to legal};afterLastBoundary.first}
     val canReplaceStriker=inn!=null&&inn.legalBalls%6==0&&currentOverBalls.isEmpty()&&!mustChangeBowler
-    if(showBowler&&inn!=null)AlertDialog(onDismissRequest={if(!mustChangeBowler)showBowler=false},title={Text(if(mustChangeBowler)"Over complete — select next bowler" else "Change bowler")},text={Column{if(mustChangeBowler)Text("A new bowler is required before scoring can continue.",color=Muted,modifier=Modifier.padding(bottom=8.dp));bowlingPlayers.filter{it.id!=inn.bowlerId}.forEach{p->TextButton(onClick={perform(onSuccess={mustChangeBowler=false;showBowler=false}){api.updateParticipants(inn.id,bowlerId=p.id)}},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text(p.name)}}}},confirmButton={if(!mustChangeBowler)TextButton(onClick={showBowler=false}){Text("CLOSE")}})
-    if(showReplaceStriker&&inn!=null)AlertDialog(onDismissRequest={showReplaceStriker=false},title={Text("Replace striker")},text={Column{Text("Replacement is allowed only before the first ball of the over.",color=Muted,modifier=Modifier.padding(bottom=8.dp));battingPlayers.filter{p->p.id!=inn.strikerId&&p.id!=inn.nonStrikerId&&!dismissed.contains(p.id)&&scorecard.batters.none{it.id==p.id}}.forEach{p->TextButton(onClick={perform(onSuccess={showReplaceStriker=false}){api.updateParticipants(inn.id,strikerId=p.id)}},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text(p.name)}}}},confirmButton={},dismissButton={TextButton(onClick={showReplaceStriker=false}){Text("CANCEL")}})
-    if(showWicket&&inn!=null)AlertDialog(onDismissRequest={showWicket=false},title={Text("Record wicket")},text={LazyColumn(Modifier.heightIn(max=560.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){item{DropdownChoice("Dismissal type",listOf("BOWLED","CAUGHT","LBW","RUN_OUT","STUMPED","HIT_WICKET","RETIRED_OUT"),dismissal){dismissal=it;fielderId="";assistantFielderId=""}};item{DropdownPlayerSelector("Dismissed player",listOfNotNull(battingPlayers.find{it.id==inn.strikerId},battingPlayers.find{it.id==inn.nonStrikerId}),dismissedId){dismissedId=it}};if(dismissal=="CAUGHT")item{DropdownPlayerSelector("Caught by *",bowlingPlayers,fielderId){fielderId=it}};if(dismissal=="RUN_OUT"){item{DropdownPlayerSelector("Primary fielder *",bowlingPlayers,fielderId){fielderId=it;if(assistantFielderId==it)assistantFielderId=""}};item{DropdownPlayerSelector("Assisting fielder (optional)",bowlingPlayers.filterNot{it.id==fielderId},assistantFielderId){assistantFielderId=it}}};item{DropdownPlayerSelector("Next batter",battingPlayers.filter{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)},nextBatterId){nextBatterId=it}}}},confirmButton={Button(onClick={showWicket=false;recordDelivery(DeliveryDraft(isWicket=true,dismissalType=dismissal,dismissedPlayerId=dismissedId.ifBlank{inn.strikerId},nextBatterId=nextBatterId.ifBlank{null},fielderId=fielderId.ifBlank{null},assistantFielderId=assistantFielderId.ifBlank{null}))},enabled=dismissedId.isNotBlank()&&((dismissal!="CAUGHT"&&dismissal!="RUN_OUT")||fielderId.isNotBlank())){Text("CONFIRM")}},dismissButton={TextButton(onClick={showWicket=false}){Text("CANCEL")}})
-    if(extraTypeDialog!=null)AlertDialog(onDismissRequest={extraTypeDialog=null},title={Text(if(extraTypeDialog=="WIDE")"Wide + runs" else "No-ball + runs")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("Select runs in addition to the free run");(0..6).chunked(4).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{runs->OutlinedButton(onClick={val type=extraTypeDialog!!;extraTypeDialog=null;if(type=="NO_BALL")recordDelivery(DeliveryDraft(batterRuns=runs,extraRuns=1,extraType=type))else recordDelivery(DeliveryDraft(extraRuns=runs+1,extraType=type))},modifier=Modifier.weight(1f)){Text(runs.toString())}}}}}},confirmButton={},dismissButton={TextButton(onClick={extraTypeDialog=null}){Text("CANCEL")}})
+    fun openPlayerChange(){loadingEligible=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){api.eligiblePlayers(match.id)}}.onSuccess{eligiblePlayers=it;showPlayerChange=true}.onFailure{error=it.message};loadingEligible=false}}
+    if(canScore&&showBroadcastPin)AlertDialog(onDismissRequest={showBroadcastPin=false},title={Text("Broadcast this match")},text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("Use the generated six-digit PIN on the camera phone. It expires after four hours. The camera phone will enter its own stream key.");Text(broadcastGrant?.pin?:"No generated PIN",fontSize=30.sp,fontWeight=FontWeight.Bold);if(BuildConfig.TEST_AUTH_BYPASS)Text("Permanent testing PIN: 301022",fontWeight=FontWeight.SemiBold);Text("Only the newest generated PIN works. Creating a new one immediately replaces the previous generated PIN.")}},confirmButton={Button(onClick={broadcastBusy=true;scope.launch{runCatching{withContext(Dispatchers.IO){api.createBroadcastGrant(match.id)}}.onSuccess{broadcastGrant=it}.onFailure{error=it.message};broadcastBusy=false}},enabled=!broadcastBusy){Text("NEW PIN")}},dismissButton={Row{TextButton(onClick={broadcastBusy=true;scope.launch{runCatching{withContext(Dispatchers.IO){api.revokeBroadcastGrant(match.id)}}.onSuccess{broadcastGrant=null;showBroadcastPin=false}.onFailure{error=it.message};broadcastBusy=false}},enabled=!broadcastBusy){Text("REVOKE")};TextButton(onClick={showBroadcastPin=false}){Text("CLOSE")}}})
+    if(canScore&&showPlayerChange)EmergencyPlayerDialog(match,lineup,eligiblePlayers,busy,onDismiss={showPlayerChange=false}){teamId,outgoingId,incomingId,newName->perform(onSuccess={showPlayerChange=false;scope.launch{lineup=runCatching{withContext(Dispatchers.IO){api.lineup(match.id)}}.getOrDefault(lineup)}}){api.changeMatchPlayer(match.id,teamId,incomingId.ifBlank{null},newName,outgoingId.ifBlank{null})}}
+    if(canScore&&showBowler&&inn!=null)AlertDialog(onDismissRequest={if(!mustChangeBowler)showBowler=false},title={Text(if(mustChangeBowler)"Over complete — select next bowler" else "Change bowler")},text={Column{if(mustChangeBowler)Text("A new bowler is required before scoring can continue.",color=Muted,modifier=Modifier.padding(bottom=8.dp));bowlingPlayers.filter{it.id!=inn.bowlerId}.forEach{p->TextButton(onClick={perform(onSuccess={mustChangeBowler=false;showBowler=false}){api.updateParticipants(inn.id,bowlerId=p.id)}},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text(p.name)}}}},confirmButton={if(!mustChangeBowler)TextButton(onClick={showBowler=false}){Text("CLOSE")}})
+    if(canScore&&showReplaceStriker&&inn!=null)AlertDialog(onDismissRequest={showReplaceStriker=false},title={Text("Replace striker")},text={Column{Text("Replacement is allowed only before the first ball of the over.",color=Muted,modifier=Modifier.padding(bottom=8.dp));battingPlayers.filter{p->p.id!=inn.strikerId&&p.id!=inn.nonStrikerId&&!dismissed.contains(p.id)&&scorecard.batters.none{it.id==p.id}}.forEach{p->TextButton(onClick={perform(onSuccess={showReplaceStriker=false}){api.updateParticipants(inn.id,strikerId=p.id)}},enabled=!busy,modifier=Modifier.fillMaxWidth()){Text(p.name)}}}},confirmButton={},dismissButton={TextButton(onClick={showReplaceStriker=false}){Text("CANCEL")}})
+    if(canScore&&showWicket&&inn!=null)AlertDialog(onDismissRequest={showWicket=false},title={Text("Record wicket")},text={LazyColumn(Modifier.heightIn(max=560.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){item{DropdownChoice("Dismissal type",listOf("BOWLED","CAUGHT","LBW","RUN_OUT","STUMPED","HIT_WICKET","RETIRED_OUT"),dismissal){dismissal=it;fielderId="";assistantFielderId=""}};item{DropdownPlayerSelector("Dismissed player",listOfNotNull(battingPlayers.find{it.id==inn.strikerId},battingPlayers.find{it.id==inn.nonStrikerId}),dismissedId){dismissedId=it}};if(dismissal=="CAUGHT")item{DropdownPlayerSelector("Caught by *",bowlingPlayers,fielderId){fielderId=it}};if(dismissal=="RUN_OUT"){item{DropdownPlayerSelector("Primary fielder *",bowlingPlayers,fielderId){fielderId=it;if(assistantFielderId==it)assistantFielderId=""}};item{DropdownPlayerSelector("Assisting fielder (optional)",bowlingPlayers.filterNot{it.id==fielderId},assistantFielderId){assistantFielderId=it}}};item{DropdownPlayerSelector("Next batter",battingPlayers.filter{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)},nextBatterId){nextBatterId=it}}}},confirmButton={Button(onClick={showWicket=false;recordDelivery(DeliveryDraft(isWicket=true,dismissalType=dismissal,dismissedPlayerId=dismissedId.ifBlank{inn.strikerId},nextBatterId=nextBatterId.ifBlank{null},fielderId=fielderId.ifBlank{null},assistantFielderId=assistantFielderId.ifBlank{null}))},enabled=dismissedId.isNotBlank()&&((dismissal!="CAUGHT"&&dismissal!="RUN_OUT")||fielderId.isNotBlank())){Text("CONFIRM")}},dismissButton={TextButton(onClick={showWicket=false}){Text("CANCEL")}})
+    if(canScore&&extraTypeDialog!=null)AlertDialog(onDismissRequest={extraTypeDialog=null},title={Text(if(extraTypeDialog=="WIDE")"Wide + runs" else "No-ball + runs")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text("Select runs in addition to the free run");(0..6).chunked(4).forEach{row->Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){row.forEach{runs->OutlinedButton(onClick={val type=extraTypeDialog!!;extraTypeDialog=null;if(type=="NO_BALL")recordDelivery(DeliveryDraft(batterRuns=runs,extraRuns=1,extraType=type))else recordDelivery(DeliveryDraft(extraRuns=runs+1,extraType=type))},modifier=Modifier.weight(1f)){Text(runs.toString())}}}}}},confirmButton={},dismissButton={TextButton(onClick={extraTypeDialog=null}){Text("CANCEL")}})
     Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize()){
         AppHeader("Live scoring",onBack=onBack)
         when{
             inn==null->Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){CircularProgressIndicator()}
             match.status=="COMPLETE"->EmptyState("Match complete",match.result,"BACK TO TOURNAMENT",onBack)
-            match.status=="INNINGS_BREAK"->InningsBreakPanel(match,lineup,busy,error){s,n,b->perform{api.endInnings(match.id,s,n,b)}}
+            match.status=="INNINGS_BREAK"&&canScore->InningsBreakPanel(match,lineup,busy,error,onChangePlayers={openPlayerChange()}){s,n,b->perform{api.endInnings(match.id,s,n,b)}}
+            match.status=="INNINGS_BREAK"->EmptyState("Innings break","The scorer will select the opening players and begin the chase.","BACK",onBack)
             else->LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(0.dp)){
                 item{ScoringHero(battingName,inn,oversText,match.overs,target,battingPlayers.size,scorecard)}
-                item{BowlerStrip(inn,scorecard,currentOverBalls){showBowler=true}}
+                item{BowlerStrip(inn,scorecard,currentOverBalls,canScore){showBowler=true}}
                 item{Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(13.dp)){
-                    if(canReplaceStriker)OutlinedButton(onClick={showReplaceStriker=true},modifier=Modifier.align(Alignment.End)){Text("REPLACE STRIKER",fontSize=11.sp)}
+                    if(canScore)OutlinedButton(onClick={openPlayerChange()},enabled=!busy&&!loadingEligible,modifier=Modifier.fillMaxWidth()){Text(if(loadingEligible)"LOADING PLAYERS…" else "CHANGE PLAYERS",fontSize=12.sp)}
+                    if(canScore)OutlinedButton(onClick={showBroadcastPin=true},modifier=Modifier.fillMaxWidth()){Text("BROADCAST PIN",fontSize=12.sp)}
+                    if(canScore&&canReplaceStriker)OutlinedButton(onClick={showReplaceStriker=true},modifier=Modifier.align(Alignment.End)){Text("REPLACE STRIKER",fontSize=11.sp)}
+                    if(!canScore)Text("Read-only live score",color=ActionTeal,fontWeight=FontWeight.Bold)
+                    if(canScore){
                     Text("Runs",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){(0..6).forEach{r->ScoreButton(r.toString(),locked){recordDelivery(DeliveryDraft(batterRuns=r))}}}
                     Text("Extras & wicket",fontWeight=FontWeight.Bold);Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){ScoreButton("WD+",locked){extraTypeDialog="WIDE"};ScoreButton("NB+",locked){extraTypeDialog="NO_BALL"};ScoreButton("B",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="BYE"))};ScoreButton("LB",locked){recordDelivery(DeliveryDraft(extraRuns=1,extraType="LEG_BYE"))};ScoreButton("W",locked){dismissedId=inn.strikerId;nextBatterId=battingPlayers.firstOrNull{it.id!=inn.strikerId&&it.id!=inn.nonStrikerId&&!dismissed.contains(it.id)}?.id?:"";showWicket=true}}
+                    }
                     ScorecardPanel(scorecard)
                     if(error!=null)Text(error!!,color=MaterialTheme.colorScheme.error)
+                    if(canScore){
                     Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){OutlinedButton(onClick={perform{api.undoDelivery(inn.id)}},enabled=!locked,modifier=Modifier.weight(1f)){Text("UNDO BALL")};Button(onClick={perform{api.endInnings(match.id)}},enabled=!locked,colors=ButtonDefaults.buttonColors(containerColor=AppRed),modifier=Modifier.weight(1f)){Text(if(match.currentInnings==1)"END INNINGS" else "END MATCH")}}
+                    }
                 }}
             }
         }
@@ -462,9 +565,22 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,onBack:()->Unit,onUp
 
 @Composable private fun BatterHighlight(name:String,stat:BatterStat?,striker:Boolean,modifier:Modifier=Modifier){val shownName=if(name.length>15)name.trim().substringBefore(" ") else name;Row(modifier.background(if(striker)Color(0xFF123A3A) else Color.Transparent).padding(horizontal=12.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(34.dp).clip(CircleShape).background(if(striker)Color(0xFF35C9C2) else Color(0xFF535B60)),contentAlignment=Alignment.Center){Text("🏏",fontSize=19.sp)};Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(shownName+(if(striker)" *" else ""),color=if(striker)Color(0xFF4ED5CF) else Color.White,fontSize=14.sp,fontWeight=if(striker)FontWeight.Bold else FontWeight.Normal,maxLines=1);Text("${stat?.runs?:0}(${stat?.balls?:0})",color=Color.White,fontSize=14.sp)}}}
 
-@Composable private fun BowlerStrip(inn:Innings,scorecard:Scorecard,deliveries:List<Delivery>,onChange:()->Unit){val bowler=scorecard.bowlers.find{it.id==inn.bowlerId};Surface(color=Color(0xFF303234)){Column(Modifier.fillMaxWidth().padding(16.dp)){Row(verticalAlignment=Alignment.CenterVertically){Text("◉",color=Color.White,fontSize=25.sp);Spacer(Modifier.width(10.dp));Text(inn.bowlerName,color=Color.White,fontSize=18.sp,modifier=Modifier.weight(1f));Text("${bowler?.legalBalls?.div(6)?:0}.${bowler?.legalBalls?.rem(6)?:0}-${bowler?.runs?:0}-${bowler?.wickets?:0}",color=Color.White);TextButton(onClick=onChange){Text("CHANGE",color=Color(0xFF4ED5CF))}};if(deliveries.isNotEmpty())LazyRow(horizontalArrangement=Arrangement.spacedBy(10.dp)){items(deliveries.size){index->BallBadge(deliveries[index])}}}}}
+@Composable private fun BowlerStrip(inn:Innings,scorecard:Scorecard,deliveries:List<Delivery>,canChange:Boolean,onChange:()->Unit){val bowler=scorecard.bowlers.find{it.id==inn.bowlerId};Surface(color=Color(0xFF303234)){Column(Modifier.fillMaxWidth().padding(16.dp)){Row(verticalAlignment=Alignment.CenterVertically){Text("◉",color=Color.White,fontSize=25.sp);Spacer(Modifier.width(10.dp));Text(inn.bowlerName,color=Color.White,fontSize=18.sp,modifier=Modifier.weight(1f));Text("${bowler?.legalBalls?.div(6)?:0}.${bowler?.legalBalls?.rem(6)?:0}-${bowler?.runs?:0}-${bowler?.wickets?:0}",color=Color.White);if(canChange)TextButton(onClick=onChange){Text("CHANGE",color=Color(0xFF4ED5CF))}};if(deliveries.isNotEmpty())LazyRow(horizontalArrangement=Arrangement.spacedBy(10.dp)){items(deliveries.size){index->BallBadge(deliveries[index])}}}}}
 
-@Composable private fun InningsBreakPanel(match:CricketMatch,lineup:List<Player>,busy:Boolean,error:String?,onStart:(String,String,String)->Unit){val first=match.innings.first();val bats=lineup.filter{it.teamId==first.bowlingTeamId};val bowls=lineup.filter{it.teamId==first.battingTeamId};var s by remember{mutableStateOf(bats.getOrNull(0)?.id?:"")};var n by remember{mutableStateOf(bats.getOrNull(1)?.id?:"")};var b by remember{mutableStateOf(bowls.getOrNull(0)?.id?:"")};LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(22.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{Text("First innings complete",fontSize=25.sp,fontWeight=FontWeight.Bold);Text("Target: ${first.runs+1}",color=ActionTeal,fontSize=20.sp)};item{PlayerSelector("Striker",bats,s){s=it}};item{PlayerSelector("Non-striker",bats.filterNot{it.id==s},n){n=it}};item{PlayerSelector("Opening bowler",bowls,b){b=it}};if(error!=null)item{Text(error,color=MaterialTheme.colorScheme.error)};item{Button(onClick={onStart(s,n,b)},enabled=!busy&&s.isNotBlank()&&n.isNotBlank()&&b.isNotBlank(),modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text("START CHASE")}}}}
+@Composable private fun InningsBreakPanel(match:CricketMatch,lineup:List<Player>,busy:Boolean,error:String?,onChangePlayers:()->Unit,onStart:(String,String,String)->Unit){val first=match.innings.first();val bats=lineup.filter{it.teamId==first.bowlingTeamId};val bowls=lineup.filter{it.teamId==first.battingTeamId};var s by remember{mutableStateOf(bats.getOrNull(0)?.id?:"")};var n by remember{mutableStateOf(bats.getOrNull(1)?.id?:"")};var b by remember{mutableStateOf(bowls.getOrNull(0)?.id?:"")};LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(22.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){item{Text("First innings complete",fontSize=25.sp,fontWeight=FontWeight.Bold);Text("Target: ${first.runs+1}",color=ActionTeal,fontSize=20.sp)};item{OutlinedButton(onClick=onChangePlayers,enabled=!busy,modifier=Modifier.fillMaxWidth()){Text("CHANGE PLAYERS")}};item{PlayerSelector("Striker",bats,s){s=it}};item{PlayerSelector("Non-striker",bats.filterNot{it.id==s},n){n=it}};item{PlayerSelector("Opening bowler",bowls,b){b=it}};if(error!=null)item{Text(error,color=MaterialTheme.colorScheme.error)};item{Button(onClick={onStart(s,n,b)},enabled=!busy&&s.isNotBlank()&&n.isNotBlank()&&b.isNotBlank(),modifier=Modifier.fillMaxWidth(),colors=ButtonDefaults.buttonColors(containerColor=ActionTeal)){Text("START CHASE")}}}}
+
+@Composable private fun EmergencyPlayerDialog(match:CricketMatch,lineup:List<Player>,candidates:List<Player>,busy:Boolean,onDismiss:()->Unit,onConfirm:(String,String,String,String)->Unit){
+    var teamId by remember{mutableStateOf(match.teamAId)};var outgoing by remember{mutableStateOf("")};var incoming by remember{mutableStateOf("")};var newName by remember{mutableStateOf("")}
+    val playingIds=lineup.map{it.id}.toSet();val outgoingOptions=lineup.filter{it.teamId==teamId};val incomingOptions=candidates.filterNot{playingIds.contains(it.id)}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Change players")},text={LazyColumn(Modifier.heightIn(max=560.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
+        item{Text("Add a late player or replace someone during the match. Earlier balls and statistics will not change.",color=Muted,fontSize=13.sp)}
+        item{TeamSelector(listOf(Team(match.teamAId,match.teamAName),Team(match.teamBId,match.teamBName)),teamId){teamId=it;outgoing=""}}
+        item{DropdownPlayerSelector("Outgoing player (optional)",outgoingOptions,outgoing){outgoing=it};if(outgoing.isNotBlank())TextButton(onClick={outgoing=""}){Text("KEEP ALL CURRENT PLAYERS",fontSize=11.sp)}}
+        item{DropdownPlayerSelector("Add an existing player",incomingOptions,incoming){incoming=it;newName=""}}
+        item{Text("OR",color=Muted,modifier=Modifier.fillMaxWidth(),textAlign=androidx.compose.ui.text.style.TextAlign.Center)}
+        item{OutlinedTextField(newName,{newName=it;incoming=""},label={Text("New player name")},singleLine=true,modifier=Modifier.fillMaxWidth())}
+    }},confirmButton={Button(onClick={onConfirm(teamId,outgoing,incoming,newName.trim())},enabled=!busy&&(incoming.isNotBlank()||newName.isNotBlank())){Text(if(busy)"SAVING…" else "SAVE CHANGE")}},dismissButton={TextButton(onClick=onDismiss){Text("CANCEL")}})
+}
 @Composable private fun BallBadge(ball:Delivery){val label=when{ball.wicket->"W";ball.extraType=="WIDE"->"Wd${ball.extraRuns}";ball.extraType=="NO_BALL"->"Nb${ball.extraRuns}";ball.extraType=="BYE"->"B${ball.extraRuns}";ball.extraType=="LEG_BYE"->"Lb${ball.extraRuns}";else->ball.batterRuns.toString()};Box(Modifier.size(42.dp).clip(CircleShape).background(if(ball.wicket)AppRed else Color(0xFFE8ECEF)),contentAlignment=Alignment.Center){Text(label,color=if(ball.wicket)Color.White else Ink,fontSize=11.sp,fontWeight=FontWeight.Bold,maxLines=1)}}
 @Composable private fun ScorecardPanel(card:Scorecard){Column(verticalArrangement=Arrangement.spacedBy(6.dp)){Text("Live scorecard",fontWeight=FontWeight.Bold);card.batters.forEach{s->Row(Modifier.fillMaxWidth()){Text(s.name+(if(s.dismissal.isBlank())" *" else ""),modifier=Modifier.weight(1f));Text("${s.runs} (${s.balls})  4s ${s.fours}  6s ${s.sixes}")}};if(card.bowlers.isNotEmpty())HorizontalDivider();card.bowlers.forEach{s->Row(Modifier.fillMaxWidth()){Text(s.name,modifier=Modifier.weight(1f));Text("${s.legalBalls/6}.${s.legalBalls%6}  ${s.runs}/${s.wickets}")}}}}
 

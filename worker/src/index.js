@@ -1,6 +1,9 @@
 import { fieldersRequired, isLegalDelivery, matchResult, strikeRunningRuns } from "./cricket.js";
 import { absoluteAssetUrl, normalizedName, shortName } from "./integration.js";
 import { buildStandings, knockoutOpening, roundRobin } from "./scheduling.js";
+import { canAccess, hashValue, normalizeRole, randomHex, ROLES, testingAccessAllowed, tokenHash, validEmail, validPin } from "./auth.js";
+import { substitutionRequestError } from "./substitution.js";
+import { authorizedBroadcastMatch, broadcastOverlayHtml, createBroadcastGrant, publicBroadcastSnapshot, redeemBroadcastPin, revokeBroadcastGrant } from "./broadcast.js";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8",
@@ -18,9 +21,45 @@ async function body(request) {
   catch { throw new Error("Request body must be valid JSON"); }
 }
 
-function requireAdmin(request, env) {
+function hasLegacyAdmin(request, env) {
   const supplied = request.headers.get("x-admin-token") || "";
   return Boolean(env.ADMIN_TOKEN) && supplied === env.ADMIN_TOKEN;
+}
+
+async function authenticatedUser(request, env) {
+  const authorization = request.headers.get("authorization") || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token) return null;
+  const hash = await tokenHash(token);
+  const user = await env.DB.prepare(`SELECT u.id,u.email,u.display_name,u.role,u.player_id
+    FROM auth_sessions s JOIN app_users u ON u.id=s.user_id
+    WHERE s.token_hash=? AND s.expires_at>CURRENT_TIMESTAMP AND u.is_active=1`).bind(hash).first();
+  if (user) await env.DB.prepare("UPDATE auth_sessions SET last_used_at=CURRENT_TIMESTAMP WHERE token_hash=?").bind(hash).run();
+  return user || null;
+}
+
+async function requireRoles(request, env, roles) {
+  if (hasLegacyAdmin(request, env)) return { id: "legacy_admin", email: "admin", display_name: "Tournament Admin", role: ROLES.TOURNAMENT_ADMIN };
+  const user = await authenticatedUser(request, env);
+  return user && canAccess(user.role, roles) ? user : null;
+}
+
+const publicUser = user => ({ id: user.id, email: user.email, displayName: user.display_name, role: user.role, playerId: user.player_id || null });
+
+async function createSession(env, user) {
+  const token = `${randomHex(24)}${randomHex(24)}`;
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  await env.DB.prepare("INSERT INTO auth_sessions(id,user_id,token_hash,expires_at) VALUES(?,?,?,?)")
+    .bind(makeId("session"), user.id, await tokenHash(token), expiresAt).run();
+  return { token, expiresAt, user: publicUser(user) };
+}
+
+async function createUser(env, { email, displayName, pin, role = ROLES.PLAYER }) {
+  const salt = randomHex(16);
+  const user = { id: makeId("user"), email: clean(email).toLowerCase(), display_name: clean(displayName), role: normalizeRole(role), player_id: null };
+  await env.DB.prepare("INSERT INTO app_users(id,email,display_name,pin_salt,pin_hash,role) VALUES(?,?,?,?,?,?)")
+    .bind(user.id, user.email, user.display_name, salt, await hashValue(pin, salt), user.role).run();
+  return user;
 }
 
 async function settings(env) {
@@ -188,6 +227,103 @@ async function route(request, env) {
 
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: jsonHeaders });
 
+  if (path === "/api/auth/register" && request.method === "POST") {
+    const input = await body(request);
+    if (!validEmail(input.email)) return fail("Enter a valid email address");
+    if (!clean(input.displayName)) return fail("Display name is required");
+    if (!validPin(input.pin)) return fail("PIN must contain 4 to 8 digits");
+    try {
+      const user = await createUser(env, { ...input, role: ROLES.PLAYER });
+      await env.DB.prepare("INSERT INTO auth_audit_log(id,target_user_id,action) VALUES(?,?,'SELF_REGISTERED')").bind(makeId("audit"), user.id).run();
+      return reply(await createSession(env, user), 201);
+    } catch (error) {
+      if (String(error.message || error).toLowerCase().includes("unique")) return fail("An account with this email already exists", 409);
+      throw error;
+    }
+  }
+
+  if (path === "/api/auth/login" && request.method === "POST") {
+    const input = await body(request);
+    const email = clean(input.email).toLowerCase();
+    const pin = clean(input.pin);
+    if ((email === "admin" || email === "tournament-admin") && Boolean(env.ADMIN_TOKEN) && pin === env.ADMIN_TOKEN) {
+      let admin = await env.DB.prepare("SELECT id,email,display_name,role,player_id FROM app_users WHERE id='system_admin'").first();
+      if (!admin) {
+        const salt = randomHex(16);
+        await env.DB.prepare("INSERT INTO app_users(id,email,display_name,pin_salt,pin_hash,role) VALUES('system_admin','admin@sportsync.local','Tournament Admin',?,?,?)")
+          .bind(salt, await hashValue(pin, salt), ROLES.TOURNAMENT_ADMIN).run();
+        admin = await env.DB.prepare("SELECT id,email,display_name,role,player_id FROM app_users WHERE id='system_admin'").first();
+      }
+      return reply(await createSession(env, admin));
+    }
+    const user = await env.DB.prepare("SELECT id,email,display_name,role,player_id,pin_salt,pin_hash FROM app_users WHERE email=? AND is_active=1").bind(email).first();
+    if (!user || !validPin(pin) || await hashValue(pin, user.pin_salt) !== user.pin_hash) return fail("Incorrect email or PIN", 401);
+    return reply(await createSession(env, user));
+  }
+
+  if (path === "/api/auth/testing-session" && request.method === "POST") {
+    if (env.APP_ENV !== "testing") return fail("Not found", 404);
+    const currentSettings = await settings(env);
+    if (!testingAccessAllowed(env.APP_ENV, currentSettings.testing_enabled)) return fail("Testing access is disabled", 403);
+    let tester = await env.DB.prepare("SELECT id,email,display_name,role,player_id FROM app_users WHERE id='testing_scorer'").first();
+    if (!tester) {
+      const salt = randomHex(16);
+      await env.DB.prepare("INSERT INTO app_users(id,email,display_name,pin_salt,pin_hash,role) VALUES('testing_scorer','scorer-test@sportsync.local','Testing Administrator',?,?,?)")
+        .bind(salt, randomHex(32), ROLES.TOURNAMENT_ADMIN).run();
+    } else if (tester.role !== ROLES.TOURNAMENT_ADMIN || tester.display_name !== "Testing Administrator") {
+      await env.DB.prepare("UPDATE app_users SET display_name='Testing Administrator',role=?,updated_at=CURRENT_TIMESTAMP WHERE id='testing_scorer'")
+        .bind(ROLES.TOURNAMENT_ADMIN).run();
+    }
+    tester = await env.DB.prepare("SELECT id,email,display_name,role,player_id FROM app_users WHERE id='testing_scorer'").first();
+    return reply(await createSession(env, tester));
+  }
+
+  if (path === "/api/auth/me" && request.method === "GET") {
+    const user = await authenticatedUser(request, env);
+    return user ? reply(publicUser(user)) : fail("Sign in required", 401);
+  }
+
+  if (path === "/api/auth/logout" && request.method === "POST") {
+    const authorization = request.headers.get("authorization") || "";
+    const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+    if (token) await env.DB.prepare("DELETE FROM auth_sessions WHERE token_hash=?").bind(await tokenHash(token)).run();
+    return reply({ success: true });
+  }
+
+  if (path === "/api/admin/users" && request.method === "GET") {
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
+    const users = await env.DB.prepare("SELECT id,email,display_name,role,player_id,is_active,created_at FROM app_users ORDER BY created_at DESC").all();
+    return reply(users.results.map(publicUser));
+  }
+
+  if (path === "/api/admin/users" && request.method === "POST") {
+    const actor = await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN]);
+    if (!actor) return fail("Tournament Admin access required", 403);
+    const input = await body(request);
+    if (!validEmail(input.email) || !clean(input.displayName) || !validPin(input.pin)) return fail("Name, valid email and a 4–8 digit PIN are required");
+    try {
+      const user = await createUser(env, { ...input, role: normalizeRole(input.role) });
+      await env.DB.prepare("INSERT INTO auth_audit_log(id,actor_user_id,target_user_id,action,details) VALUES(?,?,?,'USER_CREATED',?)")
+        .bind(makeId("audit"), actor.id, user.id, user.role).run();
+      return reply(publicUser(user), 201);
+    } catch (error) {
+      if (String(error.message || error).toLowerCase().includes("unique")) return fail("An account with this email already exists", 409);
+      throw error;
+    }
+  }
+
+  const userRoleMatch = path.match(/^\/api\/admin\/users\/([^/]+)\/role$/);
+  if (userRoleMatch && request.method === "PUT") {
+    const actor = await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN]);
+    if (!actor) return fail("Tournament Admin access required", 403);
+    const input = await body(request);
+    const role = normalizeRole(input.role);
+    await env.DB.prepare("UPDATE app_users SET role=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(role, userRoleMatch[1]).run();
+    await env.DB.prepare("INSERT INTO auth_audit_log(id,actor_user_id,target_user_id,action,details) VALUES(?,?,?,'ROLE_CHANGED',?)")
+      .bind(makeId("audit"), actor.id, userRoleMatch[1], role).run();
+    return reply({ success: true, role });
+  }
+
   if (path === "/api/health" && request.method === "GET") {
     const currentSettings = await settings(env);
     return reply({
@@ -200,8 +336,36 @@ async function route(request, env) {
     });
   }
 
+  const broadcastGrantMatch = path.match(/^\/api\/matches\/([^/]+)\/broadcast\/grant$/);
+  if (broadcastGrantMatch && (request.method === "POST" || request.method === "DELETE")) {
+    const actor = await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN]);
+    if (!actor) return fail("Scorer access required", 403);
+    return request.method === "POST"
+      ? createBroadcastGrant(env, broadcastGrantMatch[1], actor.id)
+      : revokeBroadcastGrant(env, broadcastGrantMatch[1]);
+  }
+
+  if (path === "/api/broadcast/redeem" && request.method === "POST") {
+    const input = await body(request);
+    return redeemBroadcastPin(request, env, input.pin);
+  }
+
+  if (path === "/api/broadcast/snapshot" && request.method === "GET") {
+    const token = url.searchParams.get("token") || request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
+    const grant = await authorizedBroadcastMatch(env, token, url.searchParams.has("token") ? "overlay" : "phone");
+    if (!grant) return fail("Broadcast access expired or revoked", 401);
+    const match = await matchView(env, grant.match_id);
+    return match ? new Response(JSON.stringify(publicBroadcastSnapshot(match)), { headers: { ...jsonHeaders, "cache-control": "no-store" } }) : fail("Match not found", 404);
+  }
+
+  if (path === "/broadcast/overlay" && request.method === "GET") {
+    const token = url.searchParams.get("token") || "";
+    if (!await authorizedBroadcastMatch(env, token, "overlay")) return fail("Broadcast overlay expired or revoked", 401);
+    return new Response(broadcastOverlayHtml(), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors *" } });
+  }
+
   if (path === "/api/admin/status" && request.method === "GET") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const [currentSettings, counts] = await Promise.all([
       settings(env),
       env.DB.prepare(`SELECT
@@ -213,7 +377,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/admin/testing" && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     const value = input.enabled === true ? "true" : "false";
     await env.DB.prepare("INSERT INTO system_settings(key,value,updated_at) VALUES('testing_enabled',?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP").bind(value).run();
@@ -221,7 +385,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/admin/maintenance" && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     const value = input.enabled === true ? "true" : "false";
     await env.DB.prepare("INSERT INTO system_settings(key,value,updated_at) VALUES('maintenance_mode',?,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP").bind(value).run();
@@ -236,20 +400,20 @@ async function route(request, env) {
   if (path === "/api/players" && request.method === "GET") return reply(await list(env, "players"));
 
   if (path === "/api/integrations/auction/status" && request.method === "GET") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const latest = await env.DB.prepare("SELECT * FROM import_runs WHERE source='AUCTION' ORDER BY started_at DESC LIMIT 1").first();
     return reply({ configured: Boolean(clean(env.AUCTION_API_BASE_URL)), latest: latest || null });
   }
 
   if (path === "/api/integrations/auction/auctions" && request.method === "GET") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const catalog = (await fetchAuctionJson(env, "auctions")).value;
     const auctions = (Array.isArray(catalog) ? catalog : catalog.auctions || []).sort((a,b) => clean(b.createdAt).localeCompare(clean(a.createdAt)));
     return reply(auctions);
   }
 
   if (path === "/api/integrations/auction/refresh" && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!clean(input.tournamentId)) return fail("Tournament is required");
     return reply(await refreshAuctionData(env, clean(input.tournamentId), clean(input.auctionReference)));
@@ -298,7 +462,7 @@ async function route(request, env) {
 
   const tournamentScheduleMatch = path.match(/^\/api\/tournaments\/([^/]+)\/schedule$/);
   if (tournamentScheduleMatch && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const tournamentId = tournamentScheduleMatch[1];
     const input = await body(request);
     const teamIds = Array.isArray(input.teamIds) ? [...new Set(input.teamIds.map(clean).filter(Boolean))] : [];
@@ -342,7 +506,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/matches" && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!input.tournamentId || !input.teamAId || !input.teamBId) return fail("Tournament and two teams are required");
     if (input.teamAId === input.teamBId) return fail("Select two different teams");
@@ -362,7 +526,7 @@ async function route(request, env) {
 
   const matchStatusMatch = path.match(/^\/api\/matches\/([^/]+)\/status$/);
   if (matchStatusMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     if (!["LIVE","PAUSED"].includes(input.status)) return fail("Status must be LIVE or PAUSED");
     await env.DB.prepare("UPDATE matches SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN ('LIVE','PAUSED')").bind(input.status,matchStatusMatch[1]).run();
@@ -370,9 +534,68 @@ async function route(request, env) {
     return value ? reply(value) : fail("Match not found", 404);
   }
 
+  const eligiblePlayersMatch = path.match(/^\/api\/matches\/([^/]+)\/eligible-players$/);
+  if (eligiblePlayersMatch && request.method === "GET") {
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
+    const match = await env.DB.prepare("SELECT id,tournament_id FROM matches WHERE id=?").bind(eligiblePlayersMatch[1]).first();
+    if (!match) return fail("Match not found", 404);
+    const result = await env.DB.prepare(`SELECT p.*,
+      COALESCE(GROUP_CONCAT(DISTINCT CASE WHEN tt.tournament_id=? THEN t.name END),'') source_team_name
+      FROM players p LEFT JOIN team_players tp ON tp.player_id=p.id AND tp.squad_status='ACTIVE'
+      LEFT JOIN teams t ON t.id=tp.team_id AND t.is_active=1
+      LEFT JOIN tournament_teams tt ON tt.team_id=t.id
+      WHERE p.is_active=1 GROUP BY p.id ORDER BY CASE WHEN source_team_name='' THEN 1 ELSE 0 END,p.name`)
+      .bind(match.tournament_id).all();
+    return reply(result.results);
+  }
+
+  const substitutionMatch = path.match(/^\/api\/matches\/([^/]+)\/substitutions$/);
+  if (substitutionMatch && request.method === "POST") {
+    const actor = await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN]);
+    if (!actor) return fail("Scorer access required", 403);
+    const input = await body(request);
+    const match = await env.DB.prepare("SELECT * FROM matches WHERE id=?").bind(substitutionMatch[1]).first();
+    if (!match) return fail("Match not found", 404);
+    const teamId = clean(input.teamId);
+    const requestError = substitutionRequestError(match,input);
+    if (requestError) return fail(requestError);
+    const outgoingId = clean(input.outgoingPlayerId);
+    if (outgoingId) {
+      const outgoing = await env.DB.prepare("SELECT player_id FROM match_players WHERE match_id=? AND team_id=? AND player_id=? AND is_playing=1")
+        .bind(match.id, teamId, outgoingId).first();
+      if (!outgoing) return fail("The outgoing player is not currently playing for this team");
+    }
+    let incomingId = clean(input.playerId);
+    if (!incomingId) {
+      const name = clean(input.newPlayerName);
+      incomingId = makeId("player");
+      await env.DB.prepare("INSERT INTO players(id,name,role) VALUES(?,?,'PLAYER')").bind(incomingId, name).run();
+    } else {
+      const player = await env.DB.prepare("SELECT id FROM players WHERE id=? AND is_active=1").bind(incomingId).first();
+      if (!player) return fail("Incoming player not found");
+    }
+    const otherAppearance = await env.DB.prepare("SELECT team_id FROM match_players WHERE match_id=? AND player_id=? AND team_id<>? AND is_playing=1")
+      .bind(match.id, incomingId, teamId).first();
+    if (otherAppearance) return fail("This player is already playing for the other team");
+    const statements = [];
+    if (outgoingId) statements.push(env.DB.prepare("UPDATE match_players SET is_playing=0 WHERE match_id=? AND team_id=? AND player_id=?").bind(match.id,teamId,outgoingId));
+    statements.push(env.DB.prepare(`INSERT INTO match_players(match_id,team_id,player_id,is_playing,is_substitute) VALUES(?,?,?,1,1)
+      ON CONFLICT(match_id,team_id,player_id) DO UPDATE SET is_playing=1,is_substitute=1`).bind(match.id,teamId,incomingId));
+    if (outgoingId) statements.push(env.DB.prepare(`UPDATE innings SET
+      striker_id=CASE WHEN batting_team_id=? AND striker_id=? THEN ? ELSE striker_id END,
+      non_striker_id=CASE WHEN batting_team_id=? AND non_striker_id=? THEN ? ELSE non_striker_id END,
+      bowler_id=CASE WHEN bowling_team_id=? AND bowler_id=? THEN ? ELSE bowler_id END,
+      updated_at=CURRENT_TIMESTAMP WHERE match_id=? AND status='LIVE'`)
+      .bind(teamId,outgoingId,incomingId,teamId,outgoingId,incomingId,teamId,outgoingId,incomingId,match.id));
+    statements.push(env.DB.prepare(`INSERT INTO match_player_substitutions(id,match_id,team_id,incoming_player_id,outgoing_player_id,actor_user_id)
+      VALUES(?,?,?,?,?,?)`).bind(makeId("substitution"),match.id,teamId,incomingId,outgoingId||null,actor.id));
+    await env.DB.batch(statements);
+    return reply({ success:true, matchId:match.id, teamId, incomingPlayerId:incomingId, outgoingPlayerId:outgoingId||null },201);
+  }
+
   const lineupMatch = path.match(/^\/api\/matches\/([^/]+)\/lineup\/([^/]+)$/);
   if (lineupMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     const playerIds = Array.isArray(input.playerIds) ? [...new Set(input.playerIds)] : [];
     if (playerIds.length < 2) return fail("Select at least two players");
@@ -384,13 +607,13 @@ async function route(request, env) {
   const lineupListMatch = path.match(/^\/api\/matches\/([^/]+)\/lineup$/);
   if (lineupListMatch && request.method === "GET") {
     const result = await env.DB.prepare(`SELECT mp.team_id,p.*,mp.is_playing,mp.is_substitute FROM match_players mp
-      JOIN players p ON p.id=mp.player_id WHERE mp.match_id=? ORDER BY mp.team_id,p.name`).bind(lineupListMatch[1]).all();
+      JOIN players p ON p.id=mp.player_id WHERE mp.match_id=? AND mp.is_playing=1 ORDER BY mp.team_id,p.name`).bind(lineupListMatch[1]).all();
     return reply(result.results);
   }
 
   const tossMatch = path.match(/^\/api\/matches\/([^/]+)\/toss$/);
   if (tossMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     const match = await env.DB.prepare("SELECT * FROM matches WHERE id=?").bind(tossMatch[1]).first();
     if (!match) return fail("Match not found", 404);
@@ -410,7 +633,7 @@ async function route(request, env) {
 
   const participantsMatch = path.match(/^\/api\/innings\/([^/]+)\/participants$/);
   if (participantsMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     await env.DB.prepare(`UPDATE innings SET striker_id=COALESCE(?,striker_id),non_striker_id=COALESCE(?,non_striker_id),bowler_id=COALESCE(?,bowler_id),updated_at=CURRENT_TIMESTAMP WHERE id=?`)
       .bind(input.strikerId||null,input.nonStrikerId||null,input.bowlerId||null,participantsMatch[1]).run();
@@ -427,7 +650,7 @@ async function route(request, env) {
     return reply(result.results);
   }
   if (deliveryMatch && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     const innings = await env.DB.prepare("SELECT i.*,m.status match_status FROM innings i JOIN matches m ON m.id=i.match_id WHERE i.id=? AND i.status='LIVE'").bind(deliveryMatch[1]).first();
     if (!innings) return fail("Live innings not found", 404);
@@ -511,7 +734,7 @@ async function route(request, env) {
 
   const undoMatch = path.match(/^\/api\/innings\/([^/]+)\/undo$/);
   if (undoMatch && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const latest = await env.DB.prepare("SELECT * FROM deliveries WHERE innings_id=? AND is_void=0 ORDER BY sequence_number DESC LIMIT 1").bind(undoMatch[1]).first();
     if (!latest) return fail("No delivery to undo");
     await env.DB.batch([
@@ -523,7 +746,7 @@ async function route(request, env) {
 
   const endInningsMatch = path.match(/^\/api\/matches\/([^/]+)\/end-innings$/);
   if (endInningsMatch && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required", 403);
     const input = await body(request);
     const match = await env.DB.prepare("SELECT * FROM matches WHERE id=?").bind(endInningsMatch[1]).first();
     if (!match || !["LIVE","INNINGS_BREAK"].includes(match.status)) return fail("Live match not found", 404);
@@ -551,7 +774,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/tournaments" && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!String(input.name || "").trim()) return fail("Tournament name is required");
     if (!validDate(input.startDate) || !validDate(input.endDate)) return fail("Select valid tournament dates");
@@ -574,7 +797,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/teams" && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!String(input.name || "").trim()) return fail("Team name is required");
     const item = { id: makeId("team"), name: clean(input.name), shortName: clean(input.shortName || input.name).slice(0, 12), logoUrl: input.logoUrl || null, city: clean(input.city), captainName: clean(input.captainName), captainPhone: clean(input.captainPhone) };
@@ -585,7 +808,7 @@ async function route(request, env) {
 
   const teamMatch = path.match(/^\/api\/teams\/([^/]+)$/);
   if (teamMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!String(input.name || "").trim()) return fail("Team name is required");
     await env.DB.prepare("UPDATE teams SET name=?,short_name=?,city=?,captain_name=?,captain_phone=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
@@ -595,7 +818,7 @@ async function route(request, env) {
   }
 
   if (path === "/api/players" && request.method === "POST") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     if (!String(input.name || "").trim()) return fail("Player name is required");
     const item = { id: makeId("player"), name: String(input.name).trim(), role: input.role || "PLAYER" };
@@ -618,7 +841,7 @@ async function route(request, env) {
 
   const membershipMatch = path.match(/^\/api\/teams\/([^/]+)\/players\/([^/]+)\/role$/);
   if (membershipMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     await env.DB.prepare("UPDATE team_players SET member_role=?,is_admin=?,is_captain=?,is_wicket_keeper=? WHERE team_id=? AND player_id=?").bind(input.role || "PLAYER",input.isAdmin ? 1 : 0,input.isCaptain ? 1 : 0,input.isWicketKeeper ? 1 : 0,membershipMatch[1],membershipMatch[2]).run();
     return reply({ success: true });
@@ -626,7 +849,7 @@ async function route(request, env) {
 
   const playerMatch = path.match(/^\/api\/players\/([^/]+)$/);
   if (playerMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     const input = await body(request);
     await env.DB.prepare("UPDATE players SET name=COALESCE(?,name), role=COALESCE(?,role), batting_style=COALESCE(?,batting_style), bowling_style=COALESCE(?,bowling_style), photo_url=COALESCE(?,photo_url), updated_at=CURRENT_TIMESTAMP WHERE id=?")
       .bind(input.name || null, input.role || null, input.battingStyle || null, input.bowlingStyle || null, input.photoUrl || null, playerMatch[1]).run();
@@ -635,12 +858,12 @@ async function route(request, env) {
 
   const teamPlayerMatch = path.match(/^\/api\/teams\/([^/]+)\/players\/([^/]+)$/);
   if (teamPlayerMatch && request.method === "PUT") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     await env.DB.prepare("INSERT INTO team_players(team_id,player_id,squad_status) VALUES(?,?,'ACTIVE') ON CONFLICT(team_id,player_id) DO UPDATE SET squad_status='ACTIVE'").bind(teamPlayerMatch[1], teamPlayerMatch[2]).run();
     return reply({ success: true });
   }
   if (teamPlayerMatch && request.method === "DELETE") {
-    if (!requireAdmin(request, env)) return fail("Admin access required", 401);
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     await env.DB.prepare("UPDATE team_players SET squad_status='REMOVED' WHERE team_id=? AND player_id=?").bind(teamPlayerMatch[1], teamPlayerMatch[2]).run();
     return reply({ success: true });
   }

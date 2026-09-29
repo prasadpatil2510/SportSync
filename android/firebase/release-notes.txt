@@ -1,8 +1,30 @@
-SportSync Cricket - version 0.10.1.
+SportSync Cricket - version 0.15.0 testing beta.
 
-- Added Start a Match and Schedule Matches actions for empty tournaments
-- Added logo-based team dropdowns to manual match setup
-- Added a newest-first auction dropdown that imports the selected squads
-- Moved Teams before Matches in the tournament view
-- Added single league, double league, and knockout-opening auto schedules
-- Added a live points table with points and net run rate
+- Added permanent broadcast testing PIN 301022
+- Only the newest generated broadcast PIN remains valid; generating another replaces it immediately
+- Added a one-tap test PIN option on the staging broadcaster screen
+- Improved messages for expired, revoked, malformed, and replaced broadcast PINs
+
+- Added match PIN for a separate camera phone
+- Direct YouTube RTMPS broadcasting with manually entered test key and live score overlay
+- Remote internet-to-OBS mode with a private read-only browser score overlay URL
+- Stream keys stay on the phone screen only and are not stored in SportSync
+- Remote OBS mode requires an operator-provided public relay address
+
+- Replaced the default Android launcher icon with the SportSync emblem
+- Hardened standard aggregate NRR for all-out and incomplete innings
+- NRR remains uncapped because high values are valid in short matches
+
+- Added emergency player changes throughout live scoring
+- Borrow an existing tournament player or create a new temporary player
+- Replace an active batter or bowler without rewriting earlier score history
+- Added SportSync branding to the app header
+
+- Opens the testing app directly without registration or sign-in
+- Grants an isolated testing-only Scorer session for cricket scoring
+- Keeps production authentication and administrator access unchanged
+
+- Added Player, Scorer and Tournament Admin accounts
+- Added role-aware navigation and protected editing/scoring controls
+- Added Tournament Admin user and role management
+- Reduced typography throughout the app for a cleaner mobile layout

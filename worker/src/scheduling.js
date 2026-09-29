@@ -37,8 +37,12 @@ export function buildStandings(teams, completedMatches) {
     const ib = match.innings.find(i => i.batting_team_id === b.teamId);
     if (ia && ib) {
       const aBalls = inningsBalls(ia), bBalls = inningsBalls(ib);
-      a.runsFor += Number(ia.runs); a.ballsFor += aBalls; a.runsAgainst += Number(ib.runs); a.ballsAgainst += bBalls;
-      b.runsFor += Number(ib.runs); b.ballsFor += bBalls; b.runsAgainst += Number(ia.runs); b.ballsAgainst += aBalls;
+      // Standard aggregate NRR cannot include a zero-ball innings. Keep the match result,
+      // but omit such abandoned/incomplete innings from both teams' NRR components.
+      if (aBalls > 0 && bBalls > 0) {
+        a.runsFor += Number(ia.runs); a.ballsFor += aBalls; a.runsAgainst += Number(ib.runs); a.ballsAgainst += bBalls;
+        b.runsFor += Number(ib.runs); b.ballsFor += bBalls; b.runsAgainst += Number(ia.runs); b.ballsAgainst += aBalls;
+      }
       if (Number(ia.runs) > Number(ib.runs)) { a.won++; a.points += 2; b.lost++; }
       else if (Number(ib.runs) > Number(ia.runs)) { b.won++; b.points += 2; a.lost++; }
       else { a.tied++; b.tied++; a.points++; b.points++; }

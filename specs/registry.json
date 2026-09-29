@@ -88,9 +88,51 @@
     {
       "id": "TOUR-012",
       "title": "Auction-linked scheduling and standings",
-      "status": "implemented",
+      "status": "verified",
       "path": "specs/features/TOUR-012-auction-scheduling-and-standings.md",
       "implementation": ["worker/src/scheduling.js", "worker/src/index.js", "worker/migrations/0006_scheduling_and_standings.sql", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "AUTH-013",
+      "title": "User authentication, roles and compact typography",
+      "status": "implemented",
+      "path": "specs/features/AUTH-013-user-roles-and-compact-type.md",
+      "implementation": ["worker/src/auth.js", "worker/src/index.js", "worker/migrations/0007_user_authentication.sql", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "AUTH-014",
+      "title": "Registration-free scoring test mode",
+      "status": "verified",
+      "path": "specs/features/AUTH-014-testing-scoring-bypass.md",
+      "implementation": ["worker/src/auth.js", "worker/src/index.js", "android/app/src/main/java/club/nmtcc/cricket", "android/app/build.gradle.kts"]
+    },
+    {
+      "id": "MATCH-015",
+      "title": "Emergency player changes during scoring",
+      "status": "verified",
+      "path": "specs/features/MATCH-015-emergency-player-changes.md",
+      "implementation": ["worker/src/index.js", "worker/src/substitution.js", "worker/migrations/0008_match_player_substitutions.sql", "android/app/src/main/java/club/nmtcc/cricket"]
+    },
+    {
+      "id": "LIVE-016",
+      "title": "Match-linked live video broadcasting",
+      "status": "implemented",
+      "path": "specs/features/LIVE-016-remote-broadcast.md",
+      "implementation": ["worker/src/broadcast.js", "worker/src/index.js", "worker/migrations/0009_match_broadcast.sql", "android/app/src/main/java/club/nmtcc/cricket/BroadcastScreen.kt", "docs/LIVE_BROADCAST_TESTING.md"]
+    },
+    {
+      "id": "TEAM-017",
+      "title": "Bulk player membership",
+      "status": "verified",
+      "path": "specs/features/TEAM-017-bulk-player-membership.md",
+      "implementation": ["android/app/src/main/java/club/nmtcc/cricket/MainActivity.kt"]
+    },
+    {
+      "id": "AUTH-018",
+      "title": "SMS-assisted player registration",
+      "status": "draft",
+      "path": "specs/features/AUTH-018-sms-assisted-player-registration.md",
+      "implementation": ["docs/PRODUCT_BACKLOG.md"]
     }
   ]
 }

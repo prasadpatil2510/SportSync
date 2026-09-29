@@ -1,6 +1,6 @@
 # TOUR-012 — Auction-linked scheduling and standings
 
-Status: implemented
+Status: verified
 
 ## Goal
 
@@ -14,6 +14,7 @@ Let an organiser import the exact auction into a tournament, create manual or st
 - Automatic scheduling supports single round robin, double round robin, and a knockout opening round. Round-robin fixtures use the circle method and support an odd number of teams with a bye.
 - League standings award 2 points for a win and 1 point for a tie/no-result, then rank by points, net run rate, wins, and team name.
 - Net run rate uses aggregate innings runs and legal balls; an all-out innings uses the scheduled full quota when calculating its rate.
+- NRR is not capped: a large positive or negative value can be valid in a short match. A completed record containing a zero-ball innings is excluded from NRR because no valid scoring rate exists.
 - Knockout matches do not contribute to the league points table.
 
 ## Failure behaviour
@@ -31,6 +32,7 @@ Let an organiser import the exact auction into a tournament, create manual or st
 - [x] Odd-team scheduling never creates a team-vs-itself fixture.
 - [x] Points table is calculated from completed league matches.
 - [x] Worker tests cover fixture counts, pair uniqueness, and standings order.
+- [x] Worker tests cover high short-match NRR, all-out full-quota treatment, and zero-ball exclusions.
 
 ## Compatibility
 

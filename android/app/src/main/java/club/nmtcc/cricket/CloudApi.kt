@@ -7,7 +7,7 @@ import java.net.URL
 
 data class Tournament(val id: String, val name: String, val city: String = "", val ground: String = "", val startDate: String = "", val endDate: String = "", val status: String = "ONGOING", val category: String = "OPEN", val ballType: String = "TENNIS", val pitchType: String = "", val matchType: String = "LIMITED_OVERS", val auctionReference: String = "")
 data class Team(val id: String, val name: String, val shortName: String = "", val city: String = "", val captainName: String = "", val captainPhone: String = "", val logoUrl: String? = null)
-data class Player(val id: String, val name: String, val role: String = "PLAYER", val teamId: String = "", val isAdmin: Boolean = false, val isCaptain: Boolean = false, val isWicketKeeper: Boolean = false, val photoUrl: String? = null)
+data class Player(val id: String, val name: String, val role: String = "PLAYER", val teamId: String = "", val isAdmin: Boolean = false, val isCaptain: Boolean = false, val isWicketKeeper: Boolean = false, val photoUrl: String? = null, val sourceTeamName: String = "")
 data class TournamentDraft(val name: String, val city: String, val ground: String, val organiserName: String, val organiserPhone: String, val organiserEmail: String, val startDate: String, val endDate: String, val category: String, val ballType: String, val pitchType: String, val matchType: String)
 data class TeamDraft(val name: String, val city: String, val captainName: String, val captainPhone: String)
 data class PlayerDraft(val name: String, val role: String, val isAdmin: Boolean, val isCaptain: Boolean, val isWicketKeeper: Boolean)
@@ -24,8 +24,14 @@ data class AuctionOption(val id:String,val name:String,val createdAt:String,val 
 data class ScheduleDraft(val tournamentId:String,val format:String,val teamIds:Set<String>,val startDateTime:String,val intervalMinutes:Int,val ground:String,val overs:Int)
 data class ScheduleResult(val matchesCreated:Int,val rounds:Int)
 data class PointRow(val teamId:String,val teamName:String,val logoUrl:String?,val played:Int,val won:Int,val lost:Int,val tied:Int,val noResult:Int,val points:Int,val nrr:Double)
+enum class AppRole { PLAYER, SCORER, TOURNAMENT_ADMIN }
+data class AppUser(val id:String,val email:String,val displayName:String,val role:AppRole,val playerId:String?=null)
+data class AuthSession(val token:String,val expiresAt:String,val user:AppUser)
+data class BroadcastGrant(val pin:String,val expiresAt:String)
+data class BroadcastSession(val matchId:String,val phoneToken:String,val overlayUrl:String,val expiresAt:String)
+data class BroadcastSnapshot(val teamA:String,val teamB:String,val runs:Int,val wickets:Int,val legalBalls:Int,val oversLimit:Int,val status:String)
 
-class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private val writeToken: String = BuildConfig.API_WRITE_TOKEN) {
+class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private val authToken: String = "", private val legacyAdminToken: String = BuildConfig.API_WRITE_TOKEN) {
     private fun request(path: String, method: String = "GET", payload: JSONObject? = null): String {
         val connection = URL("$baseUrl$path").openConnection() as HttpURLConnection
         return try {
@@ -33,7 +39,8 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
             connection.connectTimeout = 10_000
             connection.readTimeout = 10_000
             connection.setRequestProperty("Accept", "application/json")
-            if (writeToken.isNotBlank()) connection.setRequestProperty("x-admin-token", writeToken)
+            if (authToken.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer $authToken")
+            if (legacyAdminToken.isNotBlank()) connection.setRequestProperty("x-admin-token", legacyAdminToken)
             if (payload != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
@@ -51,7 +58,18 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     }
 
     fun health(): Boolean = JSONObject(request("/api/health")).optString("status") == "UP"
-    fun adminAccess(): Boolean = runCatching { JSONObject(request("/api/admin/status")).has("counts") }.getOrDefault(false)
+    fun createBroadcastGrant(matchId:String):BroadcastGrant { val json=JSONObject(request("/api/matches/$matchId/broadcast/grant","POST",JSONObject()));return BroadcastGrant(json.string("pin"),json.string("expiresAt")) }
+    fun revokeBroadcastGrant(matchId:String) { request("/api/matches/$matchId/broadcast/grant","DELETE") }
+    fun redeemBroadcastPin(pin:String):BroadcastSession { val json=JSONObject(request("/api/broadcast/redeem","POST",JSONObject().put("pin",pin)));return BroadcastSession(json.string("matchId"),json.string("phoneToken"),json.string("overlayUrl"),json.string("expiresAt")) }
+    fun broadcastSnapshot():BroadcastSnapshot { val json=JSONObject(request("/api/broadcast/snapshot"));return BroadcastSnapshot(json.string("teamA"),json.string("teamB"),json.optInt("runs"),json.optInt("wickets"),json.optInt("legalBalls"),json.optInt("oversLimit"),json.string("status")) }
+    fun login(email:String,pin:String):AuthSession = JSONObject(request("/api/auth/login","POST",JSONObject().put("email",email).put("pin",pin))).toAuthSession()
+    fun testingSession():AuthSession = JSONObject(request("/api/auth/testing-session","POST",JSONObject())).toAuthSession()
+    fun register(displayName:String,email:String,pin:String):AuthSession = JSONObject(request("/api/auth/register","POST",JSONObject().put("displayName",displayName).put("email",email).put("pin",pin))).toAuthSession()
+    fun me():AppUser = JSONObject(request("/api/auth/me")).toAppUser()
+    fun logout() { request("/api/auth/logout","POST",JSONObject()) }
+    fun users():List<AppUser> = JSONArray(request("/api/admin/users")).objects().map{it.toAppUser()}
+    fun createUser(displayName:String,email:String,pin:String,role:AppRole):AppUser = JSONObject(request("/api/admin/users","POST",JSONObject().put("displayName",displayName).put("email",email).put("pin",pin).put("role",role.name))).toAppUser()
+    fun updateUserRole(userId:String,role:AppRole) { request("/api/admin/users/$userId/role","PUT",JSONObject().put("role",role.name)) }
     fun tournaments(): List<Tournament> = JSONArray(request("/api/tournaments")).objects().map { it.toTournament() }
     fun teams():List<Team> = JSONArray(request("/api/teams")).objects().map{it.toTeam()}
     fun matches():List<CricketMatch> = JSONArray(request("/api/matches")).objects().map{it.toMatch()}
@@ -92,6 +110,10 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     fun createMatch(draft: MatchDraft): CricketMatch = JSONObject(request("/api/matches", "POST", JSONObject().put("tournamentId",draft.tournamentId).put("roundName",draft.roundName).put("teamAId",draft.teamAId).put("teamBId",draft.teamBId).put("scheduledAt",draft.scheduledAt).put("ground",draft.ground).put("oversPerInnings",draft.overs))).toMatch()
     fun saveLineup(matchId: String, teamId: String, playerIds: Set<String>) { request("/api/matches/$matchId/lineup/$teamId", "PUT", JSONObject().put("playerIds", JSONArray(playerIds.toList()))) }
     fun lineup(matchId: String): List<Player> = JSONArray(request("/api/matches/$matchId/lineup")).objects().map { it.toPlayer() }
+    fun eligiblePlayers(matchId: String): List<Player> = JSONArray(request("/api/matches/$matchId/eligible-players")).objects().map { it.toPlayer() }
+    fun changeMatchPlayer(matchId:String,teamId:String,incomingPlayerId:String?,newPlayerName:String,outgoingPlayerId:String?) {
+        request("/api/matches/$matchId/substitutions","POST",JSONObject().put("teamId",teamId).putOpt("playerId",incomingPlayerId).put("newPlayerName",newPlayerName).putOpt("outgoingPlayerId",outgoingPlayerId))
+    }
     fun recordToss(matchId: String, winnerId: String, decision: String, strikerId: String, nonStrikerId: String, bowlerId: String): CricketMatch = JSONObject(request("/api/matches/$matchId/toss", "PUT", JSONObject().put("tossWinnerId",winnerId).put("decision",decision).put("strikerId",strikerId).put("nonStrikerId",nonStrikerId).put("bowlerId",bowlerId))).toMatch()
     fun updateParticipants(inningsId: String, strikerId: String? = null, nonStrikerId: String? = null, bowlerId: String? = null) { request("/api/innings/$inningsId/participants", "PUT", JSONObject().putOpt("strikerId",strikerId).putOpt("nonStrikerId",nonStrikerId).putOpt("bowlerId",bowlerId)) }
     fun addDelivery(inningsId: String, draft: DeliveryDraft) { request("/api/innings/$inningsId/deliveries", "POST", JSONObject().put("batterRuns",draft.batterRuns).put("extraRuns",draft.extraRuns).put("extraType",draft.extraType).put("isWicket",draft.isWicket).putOpt("dismissalType",draft.dismissalType).putOpt("dismissedPlayerId",draft.dismissedPlayerId).putOpt("nextBatterId",draft.nextBatterId).putOpt("fielderId",draft.fielderId).putOpt("assistantFielderId",draft.assistantFielderId)) }
@@ -106,9 +128,11 @@ private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
 private fun JSONObject.string(name: String) = optString(name, "")
 private fun JSONObject.toTournament() = Tournament(id = string("id"), name = string("name"), city = string("city"), ground = string("ground"), startDate = string("start_date").ifBlank { string("startDate") }, endDate = string("end_date").ifBlank { string("endDate") }, status = string("status").ifBlank { "ONGOING" }, category = string("category").ifBlank { "OPEN" }, ballType = string("ball_type").ifBlank { string("ballType") }.ifBlank { "TENNIS" }, pitchType = string("pitch_type").ifBlank { string("pitchType") }, matchType = string("match_type").ifBlank { string("matchType") }, auctionReference=string("auction_reference").ifBlank{string("auctionReference")})
 private fun JSONObject.toTeam() = Team(id = string("id"), name = string("name"), shortName = string("short_name").ifBlank { string("shortName") }, city = string("city"), captainName = string("captain_name").ifBlank { string("captainName") }, captainPhone = string("captain_phone").ifBlank { string("captainPhone") }, logoUrl = optString("logo_url").takeIf { it.isNotBlank() })
-private fun JSONObject.toPlayer() = Player(id = string("id"), name = string("name"), role = string("member_role").ifBlank { string("role") }.ifBlank { "PLAYER" }, teamId = string("team_id"), isAdmin = optInt("is_admin") == 1, isCaptain = optInt("is_captain") == 1, isWicketKeeper = optInt("is_wicket_keeper") == 1, photoUrl = optString("photo_url").takeIf { it.isNotBlank() })
+private fun JSONObject.toPlayer() = Player(id = string("id"), name = string("name"), role = string("member_role").ifBlank { string("role") }.ifBlank { "PLAYER" }, teamId = string("team_id"), isAdmin = optInt("is_admin") == 1, isCaptain = optInt("is_captain") == 1, isWicketKeeper = optInt("is_wicket_keeper") == 1, photoUrl = optString("photo_url").takeIf { it.isNotBlank() }, sourceTeamName = string("source_team_name"))
 private fun JSONObject.toInnings() = Innings(id=string("id"),number=optInt("innings_number"),battingTeamId=string("batting_team_id"),bowlingTeamId=string("bowling_team_id"),runs=optInt("runs"),wickets=optInt("wickets"),legalBalls=optInt("legal_balls"),status=string("status"),strikerId=string("striker_id"),nonStrikerId=string("non_striker_id"),bowlerId=string("bowler_id"),strikerName=string("striker_name"),nonStrikerName=string("non_striker_name"),bowlerName=string("bowler_name"))
 private fun JSONObject.toMatch(): CricketMatch { val list=optJSONArray("innings")?.objects()?.map { it.toInnings() } ?: emptyList(); return CricketMatch(id=string("id"),tournamentId=string("tournament_id").ifBlank{string("tournamentId")},roundName=string("round_name").ifBlank{string("roundName")},teamAId=string("team_a_id").ifBlank{string("teamAId")},teamAName=string("team_a_name").ifBlank{string("teamAName")},teamBId=string("team_b_id").ifBlank{string("teamBId")},teamBName=string("team_b_name").ifBlank{string("teamBName")},ground=string("ground"),scheduledAt=string("scheduled_at").ifBlank{string("scheduledAt")},overs=optInt("overs_per_innings",20),status=string("status").ifBlank{"SCHEDULED"},currentInnings=optInt("current_innings"),result=string("result_text"),innings=list) }
 private fun JSONObject.toDelivery()=Delivery(id=string("id"),sequence=optInt("sequence_number"),batterRuns=optInt("batter_runs"),extraRuns=optInt("extra_runs"),extraType=string("extra_type"),wicket=optInt("is_wicket")==1,dismissalType=string("dismissal_type"),dismissedPlayerId=string("dismissed_player_id"),strikerName=string("striker_name"),bowlerId=string("bowler_id"),bowlerName=string("bowler_name"),legal=optInt("is_legal",1)==1,fielderName=string("fielder_name"),assistantFielderName=string("assistant_fielder_name"))
 private fun JSONObject.toBatterStat()=BatterStat(id=string("id"),name=string("name"),runs=optInt("runs"),balls=optInt("balls"),fours=optInt("fours"),sixes=optInt("sixes"),dismissal=string("dismissal"),fielderName=string("fielder_name"),assistantFielderName=string("assistant_fielder_name"),dismissalBowlerName=string("dismissal_bowler_name"))
 private fun JSONObject.toBowlerStat()=BowlerStat(id=string("id"),name=string("name"),legalBalls=optInt("legal_balls"),runs=optInt("runs"),wickets=optInt("wickets"),maidens=optInt("maidens"))
+private fun JSONObject.toAppUser()=AppUser(id=string("id"),email=string("email"),displayName=string("displayName").ifBlank{string("display_name")},role=runCatching{AppRole.valueOf(string("role"))}.getOrDefault(AppRole.PLAYER),playerId=optString("playerId").ifBlank{optString("player_id")}.takeIf{it.isNotBlank()})
+private fun JSONObject.toAuthSession()=AuthSession(token=string("token"),expiresAt=string("expiresAt"),user=getJSONObject("user").toAppUser())
