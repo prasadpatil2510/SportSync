@@ -8,7 +8,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,7 +18,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -126,19 +124,24 @@ private fun BroadcastPreview(match: CricketMatch?, scorecard: Scorecard, deliver
         } else {
             val innings = match.innings.last()
             val battingTeam = if (innings.battingTeamId == match.teamAId) match.teamAName else match.teamBName
-            val activeBatters = scorecard.batters.filter { it.dismissal.isBlank() }.take(2)
+            val striker = scorecard.batters.find { it.id == innings.strikerId }
+            val nonStriker = scorecard.batters.find { it.id == innings.nonStrikerId }
             val bowler = scorecard.bowlers.find { it.id == innings.bowlerId } ?: scorecard.bowlers.lastOrNull()
             val currentOver = currentOver(deliveries)
-            Surface(color = Color(0xEB07131F), shape = RoundedCornerShape(10.dp), modifier = Modifier.align(Alignment.BottomStart).padding(10.dp).fillMaxWidth(.78f)) {
-                Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Column(Modifier.weight(1f)) { Text(battingTeam.uppercase(), color = Color(0xFFFFCA43), fontSize = 10.sp, fontWeight = FontWeight.Bold); Text("${innings.runs}/${innings.wickets}", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black) }
-                        Text("${innings.legalBalls / 6}.${innings.legalBalls % 6} OV", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                    HorizontalDivider(color = Color(0x44FFFFFF))
-                    activeBatters.forEachIndexed { index, batter -> Row { Text((if (index == 0) "🏏 " else "   ") + batter.name, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)); Text("${batter.runs} (${batter.balls})", color = Color.White, fontWeight = FontWeight.Bold) } }
-                    if (bowler != null) Row { Text("● ${bowler.name}", color = Color(0xFF8DE5E1), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)); Text("${bowler.legalBalls / 6}.${bowler.legalBalls % 6}  ${bowler.runs}/${bowler.wickets}", color = Color(0xFF8DE5E1), fontWeight = FontWeight.Bold) }
-                    if (currentOver.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { currentOver.forEach { ball -> Surface(color = if (ball.wicket) Color(0xFFE73945) else Color(0xFFE9EEF3), shape = RoundedCornerShape(50)) { Text(ballLabel(ball), color = if (ball.wicket) Color.White else Color(0xFF111820), fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)) } } }
+            Surface(color = Color(0xEE07131F), modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().fillMaxHeight(.10f)) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(battingTeam.take(3).uppercase(), color = Color(0xFFFFCA43), fontSize = 8.sp, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.width(4.dp))
+                    Text("${innings.runs}/${innings.wickets}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                    Text("  ${innings.legalBalls / 6}.${innings.legalBalls % 6}", color = Color(0xFFD2D8DF), fontSize = 7.sp)
+                    OverlaySeparator()
+                    Text("🏏 ${striker?.name?.firstName() ?: innings.strikerName.firstName()} ${striker?.runs ?: 0}(${striker?.balls ?: 0})", color = Color.White, fontSize = 7.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    OverlaySeparator()
+                    Text("${nonStriker?.name?.firstName() ?: innings.nonStrikerName.firstName()} ${nonStriker?.runs ?: 0}(${nonStriker?.balls ?: 0})", color = Color.White, fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    OverlaySeparator()
+                    Text("${bowler?.name?.firstName() ?: innings.bowlerName.firstName()} ${bowler?.legalBalls?.div(6) ?: 0}.${bowler?.legalBalls?.rem(6) ?: 0}-${bowler?.runs ?: 0}-${bowler?.wickets ?: 0}", color = Color(0xFF8DE5E1), fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    OverlaySeparator()
+                    Text("THIS OVER  ${if (currentOver.isEmpty()) "—" else currentOver.joinToString(", ") { ballLabel(it) }}", color = Color.White, fontSize = 7.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1.15f))
                 }
             }
         }
@@ -199,3 +202,8 @@ private fun ballLabel(ball: Delivery): String = when {
     ball.batterRuns + ball.extraRuns == 0 -> "0"
     else -> (ball.batterRuns + ball.extraRuns).toString()
 }
+
+@Composable
+private fun OverlaySeparator() = Box(Modifier.padding(horizontal = 5.dp).width(1.dp).fillMaxHeight(.62f).background(Color(0x44FFFFFF)))
+
+private fun String.firstName(): String = trim().substringBefore(' ').ifBlank { "—" }

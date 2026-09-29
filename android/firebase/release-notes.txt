@@ -1,4 +1,10 @@
-SportSync Cricket - version 0.18.0 testing beta.
+SportSync Cricket - version 0.19.0 testing beta.
+
+- Rebuilt the overlay as a compact linear cricket scorebar
+- Reduced overlay height to approximately 10% of the video frame
+- Added explicit striker and non-striker details with a bat marker for the striker
+- Simplified this-over history into comma-separated values without ball backgrounds
+- Reduced scorebar typography for phone landscape and PC viewing
 
 - Added a hamburger menu with Matches, Tournaments, Teams and Stats links
 - Added an offline Overlay Preview that does not start camera or YouTube
