@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.26.0 testing beta.
+SportSync Cricket - version 0.27.1 testing beta.
+
+- One 24-hour tournament broadcast code now follows each newly live match automatically
+- Added bowler overs, runs and wickets plus the current-over ball sequence
+- Team abbreviations now use initials such as MW and LL
+- Added a two-second between-overs batting scorecard which closes when the next bowler is selected
 
 - Added runs and balls beside both batter names
 - Matched non-striker typography and color to the striker, without the bat symbol

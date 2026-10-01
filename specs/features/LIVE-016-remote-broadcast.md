@@ -8,7 +8,8 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 
 ## Scope
 
-- A scorer or tournament administrator creates a short-lived, match-specific broadcast PIN.
+- A scorer or tournament administrator creates a 24-hour tournament broadcast code from any match in that tournament.
+- After redemption, the read-only broadcast automatically follows the tournament's most recently updated live match. Between matches it keeps the latest completed match visible, so the camera and YouTube stream do not need to restart.
 - The generated PIN is displayed prominently and cached locally to prefill the Broadcast screen on the same device.
 - A second Android device enters the match PIN, then selects either direct YouTube RTMPS or a remotely reachable RTMPS/RTMP ingest for OBS.
 - The YouTube stream key is entered manually on the broadcast device and is never sent to the SportSync API or persisted.
@@ -28,6 +29,9 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - A transparent NMTCC logo watermark is rendered inside the upper-right safe area of the same master composition.
 - Overlay typography uses reference-canvas pixel sizes rather than device-scaled `sp`, preventing clipping and inconsistent enlargement across phones.
 - Preview can be refreshed whenever its surface is ready; disabled Start and Stop controls are accompanied by the exact missing prerequisite.
+- Team abbreviations use the initials of meaningful words and ignore a leading `The` (`The Maverick Wolves` → `MW`, `Lightning Lions` → `LL`).
+- The bowler block shows overs, conceded runs and wickets on its first line, followed directly by the current-over ball sequence without a `THIS OVER` label.
+- At a completed over, the normal strip remains for two seconds and then changes to a larger batting scorecard. Selecting the next bowler closes the scorecard immediately and restores the normal strip.
 
 ## Rules and invariants
 

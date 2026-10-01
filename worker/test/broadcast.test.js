@@ -7,11 +7,11 @@ import worker from "../src/index.js";
 
 function testEnvironment() {
   const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec("CREATE TABLE matches(id TEXT PRIMARY KEY)");
+  sqlite.exec("CREATE TABLE matches(id TEXT PRIMARY KEY,tournament_id TEXT,status TEXT DEFAULT 'SCHEDULED',updated_at TEXT DEFAULT CURRENT_TIMESTAMP)");
   sqlite.exec(readFileSync(new URL("../migrations/0007_user_authentication.sql", import.meta.url), "utf8"));
   sqlite.exec(readFileSync(new URL("../migrations/0009_match_broadcast.sql", import.meta.url), "utf8"));
-  sqlite.prepare("INSERT INTO matches(id) VALUES(?)").run("match_1");
-  sqlite.prepare("INSERT INTO matches(id) VALUES(?)").run("match_2");
+  sqlite.prepare("INSERT INTO matches(id,tournament_id) VALUES(?,?)").run("match_1", "tournament_1");
+  sqlite.prepare("INSERT INTO matches(id,tournament_id) VALUES(?,?)").run("match_2", "tournament_2");
   const prepare = sql => {
     const stmt = sqlite.prepare(sql);
     const bound = values => ({ first: async () => stmt.get(...values), all: async () => ({ results: stmt.all(...values) }), run: async () => stmt.run(...values) });
@@ -89,11 +89,13 @@ test("broadcast snapshot contains score but no private match or account fields",
     id: "match_1", status: "LIVE", team_a_name: "A", team_a_logo_url: "https://assets.test/a.png", team_b_name: "B", team_b_logo_url: "https://assets.test/b.png",
     batting_team_name: "A", batting_team_logo_url: "https://assets.test/a.png", bowling_team_name: "B", bowling_team_logo_url: "https://assets.test/b.png", current_innings: 1,
     overs_per_innings: 20, updated_at: "2026-09-22", private_note: "secret",
-    innings: [{ runs: 42, wickets: 2, legal_balls: 35, striker_name: "P1", striker_runs: 24, striker_balls: 16, non_striker_name: "P2", non_striker_runs: 10, non_striker_balls: 8, bowler_name: "P3" }]
+    innings: [{ runs: 42, wickets: 2, legal_balls: 35, striker_name: "P1", striker_runs: 24, striker_balls: 16, non_striker_name: "P2", non_striker_runs: 10, non_striker_balls: 8, bowler_name: "P3", bowler_legal_balls: 11, bowler_runs: 18, bowler_wickets: 1, current_over: [{ batter_runs: 1, extra_runs: 0, extra_type: "NONE", is_wicket: 0 }], batting_card: [{ name: "P1", runs: 24, balls: 16, dismissal: "NOT OUT" }] }]
   });
   assert.deepEqual([result.runs, result.wickets, result.legalBalls], [42, 2, 35]);
   assert.deepEqual([result.battingTeamLogo, result.bowlingTeamLogo], ["https://assets.test/a.png", "https://assets.test/b.png"]);
   assert.deepEqual([result.strikerRuns, result.strikerBalls, result.nonStrikerRuns, result.nonStrikerBalls], [24, 16, 10, 8]);
+  assert.deepEqual([result.bowlerLegalBalls, result.bowlerRuns, result.bowlerWickets, result.currentOver.join(",")], [11, 18, 1, "1"]);
+  assert.deepEqual(result.battingCard, [{ name: "P1", runs: 24, balls: 16, dismissal: "NOT OUT" }]);
   assert.equal("private_note" in result, false);
 });
 
@@ -126,6 +128,20 @@ test("PIN redemption issues read-only tokens; rotation and revocation invalidate
     assert.equal((await authorizedBroadcastMatch(env, second.phoneToken, "phone"))?.match_id, "match_1");
     await revokeBroadcastGrant(env, "match_1");
     assert.equal(await authorizedBroadcastMatch(env, second.phoneToken, "phone"), undefined);
+  } finally { sqlite.close(); }
+});
+
+test("a tournament broadcast token follows the latest live match", async () => {
+  const { sqlite, env } = testEnvironment();
+  try {
+    sqlite.prepare("INSERT INTO matches(id,tournament_id,status,updated_at) VALUES(?,?,?,?)").run("match_live", "tournament_1", "LIVE", "2026-10-01T10:00:00Z");
+    const { pin } = await (await createBroadcastGrant(env, "match_1", "scorer_1")).json();
+    const session = await (await redeemBroadcastPin(new Request("https://example.test/api/broadcast/redeem", { headers: { "CF-Connecting-IP": "203.0.113.33" } }), env, pin)).json();
+    assert.equal((await authorizedBroadcastMatch(env, session.phoneToken, "phone"))?.match_id, "match_live");
+    sqlite.prepare("UPDATE matches SET status='COMPLETE' WHERE id='match_live'").run();
+    assert.equal((await authorizedBroadcastMatch(env, session.phoneToken, "phone"))?.match_id, "match_live");
+    sqlite.prepare("INSERT INTO matches(id,tournament_id,status,updated_at) VALUES(?,?,?,?)").run("match_live_2", "tournament_1", "LIVE", "2026-10-01T12:00:00Z");
+    assert.equal((await authorizedBroadcastMatch(env, session.phoneToken, "phone"))?.match_id, "match_live_2");
   } finally { sqlite.close(); }
 });
 

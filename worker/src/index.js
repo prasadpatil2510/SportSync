@@ -73,9 +73,9 @@ async function list(env, table) {
 }
 
 async function matchView(env, matchId) {
-  const match = await env.DB.prepare(`SELECT m.*,a.name team_a_name,a.logo_url team_a_logo_url,b.name team_b_name,b.logo_url team_b_logo_url,
+  const match = await env.DB.prepare(`SELECT m.*,t.name tournament_name,a.name team_a_name,a.logo_url team_a_logo_url,b.name team_b_name,b.logo_url team_b_logo_url,
     tw.name toss_winner_name,bt.name batting_team_name,bt.logo_url batting_team_logo_url,bw.name bowling_team_name,bw.logo_url bowling_team_logo_url
-    FROM matches m JOIN teams a ON a.id=m.team_a_id JOIN teams b ON b.id=m.team_b_id
+    FROM matches m JOIN tournaments t ON t.id=m.tournament_id JOIN teams a ON a.id=m.team_a_id JOIN teams b ON b.id=m.team_b_id
     LEFT JOIN teams tw ON tw.id=m.toss_winner_id LEFT JOIN teams bt ON bt.id=m.batting_team_id
     LEFT JOIN teams bw ON bw.id=m.bowling_team_id WHERE m.id=?`).bind(matchId).first();
   if (!match) return null;
@@ -83,9 +83,39 @@ async function matchView(env, matchId) {
     (SELECT COALESCE(SUM(d.batter_runs),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.striker_id AND d.is_void=0) striker_runs,
     (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.striker_id AND d.is_void=0) striker_balls,
     (SELECT COALESCE(SUM(d.batter_runs),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.non_striker_id AND d.is_void=0) non_striker_runs,
-    (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.non_striker_id AND d.is_void=0) non_striker_balls
+    (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.striker_id=i.non_striker_id AND d.is_void=0) non_striker_balls,
+    (SELECT COALESCE(SUM(d.is_legal),0) FROM deliveries d WHERE d.innings_id=i.id AND d.bowler_id=i.bowler_id AND d.is_void=0) bowler_legal_balls,
+    (SELECT COALESCE(SUM(d.batter_runs+CASE WHEN d.extra_type IN ('WIDE','NO_BALL') THEN d.extra_runs ELSE 0 END),0) FROM deliveries d WHERE d.innings_id=i.id AND d.bowler_id=i.bowler_id AND d.is_void=0) bowler_runs,
+    (SELECT COALESCE(SUM(CASE WHEN d.is_wicket=1 AND COALESCE(d.dismissal_type,'') NOT IN ('RUN_OUT','RETIRED_HURT','OBSTRUCTING_FIELD') THEN 1 ELSE 0 END),0) FROM deliveries d WHERE d.innings_id=i.id AND d.bowler_id=i.bowler_id AND d.is_void=0) bowler_wickets,
+    (SELECT d.bowler_id FROM deliveries d WHERE d.innings_id=i.id AND d.is_void=0 ORDER BY d.sequence_number DESC LIMIT 1) last_delivery_bowler_id
     FROM innings i LEFT JOIN players s ON s.id=i.striker_id LEFT JOIN players n ON n.id=i.non_striker_id
     LEFT JOIN players b ON b.id=i.bowler_id WHERE i.match_id=? ORDER BY i.innings_number`).bind(matchId).all();
+  const current = innings.results.at(-1);
+  if (current) {
+    const deliveryResult = await env.DB.prepare(`SELECT sequence_number,batter_runs,extra_runs,extra_type,is_wicket,is_legal
+      FROM deliveries WHERE innings_id=? AND is_void=0 ORDER BY sequence_number`).bind(current.id).all();
+    let legalInOver = 0;
+    let currentOver = [];
+    for (const delivery of deliveryResult.results) {
+      currentOver.push(delivery);
+      if (Number(delivery.is_legal) === 1) legalInOver += 1;
+      if (legalInOver === 6) { currentOver = []; legalInOver = 0; }
+    }
+    current.current_over = currentOver;
+    const card = await env.DB.prepare(`SELECT p.id,p.name,
+      COALESCE(SUM(CASE WHEN d.striker_id=p.id THEN d.batter_runs ELSE 0 END),0) runs,
+      COALESCE(SUM(CASE WHEN d.striker_id=p.id AND d.is_legal=1 THEN 1 ELSE 0 END),0) balls,
+      CASE
+        WHEN p.id=i.striker_id OR p.id=i.non_striker_id THEN 'NOT OUT'
+        WHEN EXISTS(SELECT 1 FROM deliveries x WHERE x.innings_id=i.id AND x.dismissed_player_id=p.id AND x.is_wicket=1 AND x.is_void=0) THEN
+          COALESCE((SELECT REPLACE(x.dismissal_type,'_',' ') FROM deliveries x WHERE x.innings_id=i.id AND x.dismissed_player_id=p.id AND x.is_wicket=1 AND x.is_void=0 ORDER BY x.sequence_number DESC LIMIT 1),'OUT')
+        ELSE '' END dismissal
+      FROM match_players mp JOIN players p ON p.id=mp.player_id JOIN innings i ON i.id=?
+      LEFT JOIN deliveries d ON d.innings_id=i.id AND d.striker_id=p.id AND d.is_void=0
+      WHERE mp.match_id=? AND mp.team_id=i.batting_team_id AND mp.is_playing=1
+      GROUP BY p.id,p.name,i.striker_id,i.non_striker_id ORDER BY mp.rowid`).bind(current.id, matchId).all();
+    current.batting_card = card.results;
+  }
   return { ...match, innings: innings.results };
 }
 

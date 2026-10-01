@@ -81,6 +81,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var prepared by remember { mutableStateOf(false) }
     var surfaceReady by remember { mutableStateOf(false) }
     var openGlView by remember { mutableStateOf<OpenGlView?>(null) }
+    var showOverCard by remember { mutableStateOf(false) }
     val logoCache = remember { mutableMapOf<String, Bitmap?>() }
     val checker = remember { object : ConnectChecker {
         override fun onConnectionStarted(url: String) { message = "Connecting…" }
@@ -124,14 +125,22 @@ fun BroadcastScreen(onBack: () -> Unit) {
             delay(2_000)
         }
     }
-    LaunchedEffect(snapshot, mode, prepared, stream) {
+    LaunchedEffect(snapshot?.overBreak, snapshot?.matchId, snapshot?.bowler) {
+        if (snapshot?.overBreak == true) {
+            delay(2_000)
+            showOverCard = true
+        } else {
+            showOverCard = false
+        }
+    }
+    LaunchedEffect(snapshot, showOverCard, mode, prepared, stream) {
         val score = snapshot ?: return@LaunchedEffect
         if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
             val battingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.battingTeamLogo, logoCache) }
             val bowlingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.bowlingTeamLogo, logoCache) }
             val filter = ViewFilterRender()
             stream.getGlInterface().setFilter(filter)
-            filter.view = createBroadcastOverlayCanvas(context, score, battingLogo, bowlingLogo)
+            filter.view = if (showOverCard) createBetweenOversCanvas(context, score, battingLogo) else createBroadcastOverlayCanvas(context, score, battingLogo, bowlingLogo)
             filter.setScale(100f, 100f)
             filter.setPosition(0f, 0f)
         }
@@ -146,8 +155,8 @@ fun BroadcastScreen(onBack: () -> Unit) {
         TextButton(onClick = onBack) { Text("‹ Back") }
         Text("Live broadcast", style = MaterialTheme.typography.headlineSmall)
         if (session == null) {
-            Text("Enter the latest six-digit PIN shown on the scoring phone.")
-            OutlinedTextField(pin, { value -> if (value.length <= 6 && value.all(Char::isDigit)) pin = value }, label = { Text("Match broadcast PIN") }, modifier = Modifier.fillMaxWidth())
+            Text("Enter the tournament broadcast code shown on the scoring phone. It follows whichever match is currently live in that tournament.")
+            OutlinedTextField(pin, { value -> if (value.length <= 6 && value.all(Char::isDigit)) pin = value }, label = { Text("Tournament broadcast code") }, modifier = Modifier.fillMaxWidth())
             if (pin.length == 6 && pin != PERMANENT_TEST_BROADCAST_PIN) Text("Latest generated PIN is ready to connect.", color = MaterialTheme.colorScheme.primary)
             if (BuildConfig.TEST_AUTH_BYPASS) {
                 AssistChip(
@@ -346,11 +355,12 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         background = rounded(AndroidColor.rgb(9, 31, 98))
-        addView(label("${score.battingTeam.take(3).uppercase()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 34f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(548, 62))
+        addView(label("${score.battingTeam.teamInitials()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 34f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(548, 62))
         addView(label("${score.teamA}  vs  ${score.teamB}", 18f, AndroidColor.rgb(183, 192, 218), horizontalGravity = Gravity.CENTER), LinearLayout.LayoutParams(548, 38))
     }, LinearLayout.LayoutParams(548, 112))
+    val bowlerOvers = "${score.bowlerLegalBalls / 6}.${score.bowlerLegalBalls % 6}"
     scorebar.addView(
-        column(score.bowler.firstName(), "THIS OVER  —", 520),
+        column("${score.bowler.firstName()}   $bowlerOvers-${score.bowlerRuns}-${score.bowlerWickets}", score.currentOver.joinToString("  ").ifBlank { "—" }, 520),
         LinearLayout.LayoutParams(520, 112)
     )
     scorebar.addView(teamLogo(bowlingLogo), LinearLayout.LayoutParams(96, 112))
@@ -376,4 +386,63 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
     )
     canvas.layout(0, 0, COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
     return canvas
+}
+
+private fun createBetweenOversCanvas(context: Context, score: BroadcastSnapshot, battingLogo: Bitmap?): View {
+    fun rounded(color: Int, radius: Float = 32f) = GradientDrawable().apply { setColor(color); cornerRadius = radius }
+    fun text(value: String, size: Float, color: Int, bold: Boolean = false, gravityValue: Int = Gravity.CENTER_VERTICAL) = TextView(context).apply {
+        this.text = value
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, size)
+        setTextColor(color)
+        gravity = gravityValue
+        setPadding(14, 0, 14, 0)
+        maxLines = 1
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+    fun row(left: String, middle: String, runs: String, balls: String, header: Boolean = false) = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        if (header) setBackgroundColor(AndroidColor.rgb(9, 31, 98))
+        val color = if (header) AndroidColor.WHITE else AndroidColor.rgb(10, 23, 58)
+        addView(text(left, if (header) 22f else 24f, color, header), LinearLayout.LayoutParams(480, 50))
+        addView(text(middle, if (header) 20f else 21f, color), LinearLayout.LayoutParams(430, 50))
+        addView(text(runs, 23f, color, true, Gravity.CENTER), LinearLayout.LayoutParams(120, 50))
+        addView(text(balls, 23f, color, true, Gravity.CENTER), LinearLayout.LayoutParams(120, 50))
+    }
+    val panel = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(AndroidColor.rgb(242, 242, 242))
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(AndroidColor.rgb(9, 31, 98))
+            addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_INSIDE; if (battingLogo != null) setImageBitmap(battingLogo) }, LinearLayout.LayoutParams(90, 90))
+            addView(text(score.battingTeam.uppercase(), 34f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(1060, 90))
+        }, LinearLayout.LayoutParams(1150, 90))
+        addView(text(score.tournamentName.uppercase(), 19f, AndroidColor.rgb(69, 79, 99), true), LinearLayout.LayoutParams(1150, 44))
+        addView(row("BATTER", "STATUS", "RUNS", "BALLS", true), LinearLayout.LayoutParams(1150, 50))
+        score.battingCard.take(11).forEach { batter ->
+            addView(row(batter.name, batter.dismissal, batter.runs.toString(), batter.balls.toString()), LinearLayout.LayoutParams(1150, 50))
+        }
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(AndroidColor.rgb(9, 31, 98))
+            addView(text("OVERS  ${score.legalBalls / 6}.${score.legalBalls % 6}", 25f, AndroidColor.WHITE, true), LinearLayout.LayoutParams(575, 64))
+            addView(text("TOTAL  ${score.runs}/${score.wickets}", 29f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(575, 64))
+        }, LinearLayout.LayoutParams(1150, 64))
+    }
+    val panelHeight = 90 + 44 + 50 + score.battingCard.take(11).size * 50 + 64
+    return FrameLayout(context).apply {
+        setBackgroundColor(AndroidColor.TRANSPARENT)
+        layoutParams = FrameLayout.LayoutParams(COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
+        addView(panel, FrameLayout.LayoutParams(1150, panelHeight).apply { leftMargin = 385; topMargin = (COMPOSITION_HEIGHT - panelHeight) / 2 })
+        addView(ImageView(context).apply { setImageResource(R.drawable.nmtcc_logo_transparent); scaleType = ImageView.ScaleType.CENTER_INSIDE }, FrameLayout.LayoutParams(198, 198, Gravity.TOP or Gravity.END).apply { topMargin = 42; rightMargin = 54 })
+        measure(View.MeasureSpec.makeMeasureSpec(COMPOSITION_WIDTH, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(COMPOSITION_HEIGHT, View.MeasureSpec.EXACTLY))
+        layout(0, 0, COMPOSITION_WIDTH, COMPOSITION_HEIGHT)
+    }
+}
+
+private fun String.teamInitials(): String {
+    val words = trim().split(Regex("\\s+")).filter { it.isNotBlank() && !it.equals("the", true) }
+    return words.take(3).joinToString("") { it.first().uppercase() }.ifBlank { take(2).uppercase() }
 }

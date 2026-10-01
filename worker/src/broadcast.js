@@ -9,7 +9,7 @@ const jsonHeaders = {
 };
 const reply = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: jsonHeaders });
 const fail = (message, status = 400) => reply({ error: message }, status);
-const EXPIRY_MS = 4 * 60 * 60 * 1000;
+const EXPIRY_MS = 24 * 60 * 60 * 1000;
 const IP_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS = 5;
 export const PERMANENT_TEST_BROADCAST_PIN = "301022";
@@ -30,8 +30,18 @@ export function newBroadcastPin() {
 
 export function publicBroadcastSnapshot(match) {
   const innings = match.innings?.at(-1) ?? null;
+  const ballLabel = ball => {
+    if (Number(ball.is_wicket) === 1) return "W";
+    if (ball.extra_type === "WIDE") return `Wd${Number(ball.extra_runs) > 1 ? ball.extra_runs : ""}`;
+    if (ball.extra_type === "NO_BALL") return `Nb${Number(ball.batter_runs) > 0 ? `+${ball.batter_runs}` : ""}`;
+    if (ball.extra_type === "BYE") return `B${ball.extra_runs}`;
+    if (ball.extra_type === "LEG_BYE") return `Lb${ball.extra_runs}`;
+    return String(ball.batter_runs ?? 0);
+  };
   return {
     matchId: match.id,
+    tournamentId: match.tournament_id,
+    tournamentName: match.tournament_name ?? "",
     status: match.status,
     teamA: match.team_a_name,
     teamB: match.team_b_name,
@@ -53,6 +63,12 @@ export function publicBroadcastSnapshot(match) {
     nonStrikerRuns: Number(innings?.non_striker_runs ?? 0),
     nonStrikerBalls: Number(innings?.non_striker_balls ?? 0),
     bowler: innings?.bowler_name ?? "",
+    bowlerLegalBalls: Number(innings?.bowler_legal_balls ?? 0),
+    bowlerRuns: Number(innings?.bowler_runs ?? 0),
+    bowlerWickets: Number(innings?.bowler_wickets ?? 0),
+    currentOver: (innings?.current_over ?? []).map(ballLabel),
+    battingCard: (innings?.batting_card ?? []).map(row => ({ name: row.name, runs: Number(row.runs), balls: Number(row.balls), dismissal: row.dismissal ?? "" })),
+    overBreak: Number(innings?.legal_balls ?? 0) > 0 && Number(innings?.legal_balls ?? 0) % 6 === 0 && innings?.bowler_id === innings?.last_delivery_bowler_id,
     result: match.result_text ?? "",
     updatedAt: innings?.updated_at ?? match.updated_at
   };
@@ -125,7 +141,13 @@ export async function redeemBroadcastPin(request, env, pin) {
 export async function authorizedBroadcastMatch(env, token, kind) {
   if (!/^[a-f0-9]{64}$/.test(token || "")) return null;
   const column = kind === "overlay" ? "overlay_token_hash" : "phone_token_hash";
-  return env.DB.prepare(`SELECT match_id FROM match_broadcast_grants WHERE ${column}=? AND revoked_at IS NULL AND expires_at>?`)
+  return env.DB.prepare(`SELECT COALESCE(
+      (SELECT active.id FROM matches active WHERE active.tournament_id=source.tournament_id AND active.status IN ('LIVE','COMPLETE')
+        ORDER BY CASE active.status WHEN 'LIVE' THEN 0 ELSE 1 END,active.updated_at DESC LIMIT 1),
+      grant.match_id
+    ) match_id
+    FROM match_broadcast_grants grant JOIN matches source ON source.id=grant.match_id
+    WHERE grant.${column}=? AND grant.revoked_at IS NULL AND grant.expires_at>?`)
     .bind(await tokenHash(token), new Date().toISOString()).first();
 }
 
