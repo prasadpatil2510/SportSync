@@ -30,6 +30,11 @@ export function newBroadcastPin() {
 
 export function publicBroadcastSnapshot(match) {
   const innings = match.innings?.at(-1) ?? null;
+  const firstInnings = match.innings?.[0] ?? null;
+  const inningsNumber = Number(match.current_innings ?? innings?.innings_number ?? 0);
+  const target = inningsNumber === 2 ? Number(firstInnings?.runs ?? 0) + 1 : 0;
+  const battingPlayers = Number(innings?.batting_card?.length ?? 0);
+  const wicketsInHand = Math.max(0, Math.max(0, battingPlayers - 1) - Number(innings?.wickets ?? 0));
   const ballLabel = ball => {
     if (Number(ball.is_wicket) === 1) return "W";
     if (ball.extra_type === "WIDE") return `Wd${Number(ball.extra_runs) > 1 ? ball.extra_runs : ""}`;
@@ -51,7 +56,7 @@ export function publicBroadcastSnapshot(match) {
     bowlingTeam: match.bowling_team_name,
     battingTeamLogo: match.batting_team_logo_url ?? "",
     bowlingTeamLogo: match.bowling_team_logo_url ?? "",
-    inningsNumber: match.current_innings,
+    inningsNumber,
     runs: innings?.runs ?? 0,
     wickets: innings?.wickets ?? 0,
     legalBalls: innings?.legal_balls ?? 0,
@@ -69,6 +74,11 @@ export function publicBroadcastSnapshot(match) {
     currentOver: (innings?.current_over ?? []).map(ballLabel),
     battingCard: (innings?.batting_card ?? []).map(row => ({ name: row.name, runs: Number(row.runs), balls: Number(row.balls), dismissal: row.dismissal ?? "" })),
     overBreak: Number(innings?.legal_balls ?? 0) > 0 && Number(innings?.legal_balls ?? 0) % 6 === 0 && innings?.bowler_id === innings?.last_delivery_bowler_id,
+    target,
+    runsNeeded: target > 0 ? Math.max(0, target - Number(innings?.runs ?? 0)) : 0,
+    ballsRemaining: target > 0 ? Math.max(0, Number(match.overs_per_innings ?? 0) * 6 - Number(innings?.legal_balls ?? 0)) : 0,
+    wicketsInHand,
+    deliverySequence: Number(innings?.delivery_sequence ?? 0),
     result: match.result_text ?? "",
     updatedAt: innings?.updated_at ?? match.updated_at
   };

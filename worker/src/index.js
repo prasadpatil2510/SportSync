@@ -102,6 +102,7 @@ async function matchView(env, matchId) {
       if (legalInOver === 6) { currentOver = []; legalInOver = 0; }
     }
     current.current_over = currentOver;
+    current.delivery_sequence = Number(deliveryResult.results.at(-1)?.sequence_number ?? 0);
     const card = await env.DB.prepare(`SELECT p.id,p.name,
       COALESCE(SUM(CASE WHEN d.striker_id=p.id THEN d.batter_runs ELSE 0 END),0) runs,
       COALESCE(SUM(CASE WHEN d.striker_id=p.id AND d.is_legal=1 THEN 1 ELSE 0 END),0) balls,

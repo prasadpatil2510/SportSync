@@ -23,8 +23,8 @@ android {
         applicationId = "club.nmtcc.cricket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "0.27.1"
+        versionCode = 35
+        versionName = "0.28.0"
         buildConfigField("String", "TEST_BROADCAST_SERVER", quotedBuildConfig(""))
         buildConfigField("String", "TEST_BROADCAST_KEY", quotedBuildConfig(""))
     }

@@ -32,6 +32,8 @@ Two phones can cover a cricket match: one scores while the other broadcasts came
 - Team abbreviations use the initials of meaningful words and ignore a leading `The` (`The Maverick Wolves` → `MW`, `Lightning Lions` → `LL`).
 - The bowler block shows overs, conceded runs and wickets on its first line, followed directly by the current-over ball sequence without a `THIS OVER` label.
 - At a completed over, the normal strip remains for two seconds and then changes to a larger batting scorecard. Selecting the next bowler closes the scorecard immediately and restores the normal strip.
+- During the second innings, the wider centre panel includes the target below the live score.
+- Every delivery in the chase retriggers a four-second information card above the left edge of the scorebar. It combines runs/balls/wickets required with the defending team's wickets-to-win message, uses marquee only when needed, and fades away without moving the main scorebar.
 
 ## Rules and invariants
 

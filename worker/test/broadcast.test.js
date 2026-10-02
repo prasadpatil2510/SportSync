@@ -99,6 +99,19 @@ test("broadcast snapshot contains score but no private match or account fields",
   assert.equal("private_note" in result, false);
 });
 
+test("second-innings snapshot includes target and per-delivery chase context", () => {
+  const card = Array.from({ length: 7 }, (_, index) => ({ name: `P${index + 1}`, runs: 0, balls: 0, dismissal: "" }));
+  const result = publicBroadcastSnapshot({
+    id: "match_2", status: "LIVE", team_a_name: "Maverick Wolves", team_b_name: "Lightning Lions",
+    batting_team_name: "Lightning Lions", bowling_team_name: "Maverick Wolves", current_innings: 2, overs_per_innings: 4,
+    innings: [
+      { innings_number: 1, runs: 38, wickets: 6, legal_balls: 24 },
+      { innings_number: 2, runs: 8, wickets: 2, legal_balls: 9, delivery_sequence: 11, batting_card: card }
+    ]
+  });
+  assert.deepEqual([result.target, result.runsNeeded, result.ballsRemaining, result.wicketsInHand, result.deliverySequence], [39, 31, 15, 4, 11]);
+});
+
 test("OBS overlay is transparent and polls read-only score data", () => {
   const html = broadcastOverlayHtml();
   assert.match(html, /background:transparent/);

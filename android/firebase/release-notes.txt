@@ -1,4 +1,9 @@
-SportSync Cricket - version 0.27.1 testing beta.
+SportSync Cricket - version 0.28.0 testing beta.
+
+- Added the second-innings target to a wider centre score panel
+- Added a four-second animated chase information card after every delivery
+- Chase information combines runs, balls and wickets required with wickets needed by the defending team
+- Long chase messages scroll at a readable marquee pace and fade without moving the scorebar
 
 - One 24-hour tournament broadcast code now follows each newly live match automatically
 - Added bowler overs, runs and wickets plus the current-over ball sequence

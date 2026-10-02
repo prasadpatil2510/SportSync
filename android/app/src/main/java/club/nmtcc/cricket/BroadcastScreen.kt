@@ -10,6 +10,7 @@ import android.graphics.Color as AndroidColor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.SurfaceHolder
 import android.view.Gravity
@@ -82,6 +83,7 @@ fun BroadcastScreen(onBack: () -> Unit) {
     var surfaceReady by remember { mutableStateOf(false) }
     var openGlView by remember { mutableStateOf<OpenGlView?>(null) }
     var showOverCard by remember { mutableStateOf(false) }
+    var showChaseInfo by remember { mutableStateOf(false) }
     val logoCache = remember { mutableMapOf<String, Bitmap?>() }
     val checker = remember { object : ConnectChecker {
         override fun onConnectionStarted(url: String) { message = "Connecting…" }
@@ -133,14 +135,23 @@ fun BroadcastScreen(onBack: () -> Unit) {
             showOverCard = false
         }
     }
-    LaunchedEffect(snapshot, showOverCard, mode, prepared, stream) {
+    LaunchedEffect(snapshot?.matchId, snapshot?.deliverySequence) {
+        if (snapshot?.inningsNumber == 2 && (snapshot?.deliverySequence ?: 0) > 0) {
+            showChaseInfo = true
+            delay(4_100)
+            showChaseInfo = false
+        } else {
+            showChaseInfo = false
+        }
+    }
+    LaunchedEffect(snapshot, showOverCard, showChaseInfo, mode, prepared, stream) {
         val score = snapshot ?: return@LaunchedEffect
         if (mode == BroadcastMode.YOUTUBE && prepared && !blankTest) {
             val battingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.battingTeamLogo, logoCache) }
             val bowlingLogo = withContext(Dispatchers.IO) { loadBroadcastLogo(score.bowlingTeamLogo, logoCache) }
             val filter = ViewFilterRender()
             stream.getGlInterface().setFilter(filter)
-            filter.view = if (showOverCard) createBetweenOversCanvas(context, score, battingLogo) else createBroadcastOverlayCanvas(context, score, battingLogo, bowlingLogo)
+            filter.view = if (showOverCard) createBetweenOversCanvas(context, score, battingLogo) else createBroadcastOverlayCanvas(context, score, battingLogo, bowlingLogo, showChaseInfo)
             filter.setScale(100f, 100f)
             filter.setPosition(0f, 0f)
         }
@@ -309,7 +320,7 @@ private fun loadBroadcastLogo(url: String, cache: MutableMap<String, Bitmap?>): 
     return bitmap
 }
 
-private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnapshot, battingLogo: Bitmap?, bowlingLogo: Bitmap?): View {
+private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnapshot, battingLogo: Bitmap?, bowlingLogo: Bitmap?, showChaseInfo: Boolean): View {
     fun rounded(color: Int, radius: Float = 56f) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = radius
@@ -348,20 +359,26 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
     }
     scorebar.addView(teamLogo(battingLogo), LinearLayout.LayoutParams(96, 112))
     scorebar.addView(
-        batterColumn(score.striker.firstName(), score.strikerRuns, score.strikerBalls, score.nonStriker.firstName(), score.nonStrikerRuns, score.nonStrikerBalls, 520),
-        LinearLayout.LayoutParams(520, 112)
+        batterColumn(score.striker.firstName(), score.strikerRuns, score.strikerBalls, score.nonStriker.firstName(), score.nonStrikerRuns, score.nonStrikerBalls, 484),
+        LinearLayout.LayoutParams(484, 112)
     )
     scorebar.addView(LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         background = rounded(AndroidColor.rgb(9, 31, 98))
-        addView(label("${score.battingTeam.teamInitials()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 34f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(548, 62))
-        addView(label("${score.teamA}  vs  ${score.teamB}", 18f, AndroidColor.rgb(183, 192, 218), horizontalGravity = Gravity.CENTER), LinearLayout.LayoutParams(548, 38))
-    }, LinearLayout.LayoutParams(548, 112))
+        if (score.inningsNumber == 2 && score.target > 0) {
+            addView(label("${score.battingTeam.teamInitials()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 32f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(620, 46))
+            addView(label("TARGET  ${score.target}", 22f, AndroidColor.rgb(248, 213, 119), true, Gravity.CENTER), LinearLayout.LayoutParams(620, 30))
+            addView(label("${score.teamA}  vs  ${score.teamB}", 17f, AndroidColor.rgb(183, 192, 218), horizontalGravity = Gravity.CENTER), LinearLayout.LayoutParams(620, 28))
+        } else {
+            addView(label("${score.battingTeam.teamInitials()}   ${score.runs}/${score.wickets}   ${score.legalBalls / 6}.${score.legalBalls % 6} OV", 34f, AndroidColor.WHITE, true, Gravity.CENTER), LinearLayout.LayoutParams(620, 62))
+            addView(label("${score.teamA}  vs  ${score.teamB}", 18f, AndroidColor.rgb(183, 192, 218), horizontalGravity = Gravity.CENTER), LinearLayout.LayoutParams(620, 38))
+        }
+    }, LinearLayout.LayoutParams(620, 112))
     val bowlerOvers = "${score.bowlerLegalBalls / 6}.${score.bowlerLegalBalls % 6}"
     scorebar.addView(
-        column("${score.bowler.firstName()}   $bowlerOvers-${score.bowlerRuns}-${score.bowlerWickets}", score.currentOver.joinToString("  ").ifBlank { "—" }, 520),
-        LinearLayout.LayoutParams(520, 112)
+        column("${score.bowler.firstName()}   $bowlerOvers-${score.bowlerRuns}-${score.bowlerWickets}", score.currentOver.joinToString("  ").ifBlank { "—" }, 484),
+        LinearLayout.LayoutParams(484, 112)
     )
     scorebar.addView(teamLogo(bowlingLogo), LinearLayout.LayoutParams(96, 112))
 
@@ -372,6 +389,31 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
             leftMargin = 70
             topMargin = 926
         })
+        if (showChaseInfo && score.inningsNumber == 2) {
+            val chaseText = buildString {
+                append("${score.battingTeam.teamInitials()} need ${score.runsNeeded} runs in ${score.ballsRemaining} balls with ${score.wicketsInHand} wickets in hand")
+                append("   •   ${score.bowlingTeam.teamInitials()} need ${score.wicketsInHand} wickets to win")
+            }
+            addView(TextView(context).apply {
+                text = chaseText
+                setTextSize(TypedValue.COMPLEX_UNIT_PX, 22f)
+                setTextColor(AndroidColor.WHITE)
+                setTypeface(typeface, Typeface.BOLD)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(24, 0, 24, 0)
+                background = rounded(AndroidColor.rgb(9, 31, 98), 28f)
+                isSingleLine = true
+                ellipsize = TextUtils.TruncateAt.MARQUEE
+                marqueeRepeatLimit = -1
+                isSelected = true
+                alpha = 0f
+                post {
+                    animate().alpha(1f).setDuration(300).withEndAction {
+                        animate().alpha(0f).setStartDelay(3_000).setDuration(700).start()
+                    }.start()
+                }
+            }, FrameLayout.LayoutParams(820, 48).apply { leftMargin = 70; topMargin = 866 })
+        }
         addView(ImageView(context).apply {
             setImageResource(R.drawable.nmtcc_logo_transparent)
             scaleType = ImageView.ScaleType.CENTER_INSIDE
