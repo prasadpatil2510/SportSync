@@ -1,4 +1,7 @@
-SportSync Cricket - version 0.28.0 testing beta.
+SportSync Cricket - version 0.28.1 testing beta.
+
+- Fixed the second-innings chase card remaining transparent in the OpenGL preview and YouTube output
+- Chase information now remains visibly rendered for four seconds after every delivery
 
 - Added the second-innings target to a wider centre score panel
 - Added a four-second animated chase information card after every delivery

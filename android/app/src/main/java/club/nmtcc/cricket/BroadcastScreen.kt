@@ -406,12 +406,10 @@ private fun createBroadcastOverlayCanvas(context: Context, score: BroadcastSnaps
                 ellipsize = TextUtils.TruncateAt.MARQUEE
                 marqueeRepeatLimit = -1
                 isSelected = true
-                alpha = 0f
-                post {
-                    animate().alpha(1f).setDuration(300).withEndAction {
-                        animate().alpha(0f).setStartDelay(3_000).setDuration(700).start()
-                    }.start()
-                }
+                // ViewFilterRender captures an off-screen View. ViewPropertyAnimator is not
+                // guaranteed to run for that detached tree, so keep the captured card opaque;
+                // the Compose delivery timer removes it after four seconds.
+                alpha = 1f
             }, FrameLayout.LayoutParams(820, 48).apply { leftMargin = 70; topMargin = 866 })
         }
         addView(ImageView(context).apply {
