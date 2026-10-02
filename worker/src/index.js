@@ -868,6 +868,26 @@ async function route(request, env) {
     return reply(result.results);
   }
 
+  const tournamentTeamMembershipMatch = path.match(/^\/api\/tournaments\/([^/]+)\/teams\/([^/]+)$/);
+  if (tournamentTeamMembershipMatch && (request.method === "POST" || request.method === "DELETE")) {
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
+    const [tournamentId, teamId] = tournamentTeamMembershipMatch.slice(1);
+    const [tournament, team] = await Promise.all([
+      env.DB.prepare("SELECT id FROM tournaments WHERE id=?").bind(tournamentId).first(),
+      env.DB.prepare("SELECT id FROM teams WHERE id=? AND is_active=1").bind(teamId).first()
+    ]);
+    if (!tournament) return fail("Tournament not found", 404);
+    if (!team) return fail("Active team not found", 404);
+    if (request.method === "POST") {
+      await env.DB.prepare("INSERT OR IGNORE INTO tournament_teams(tournament_id,team_id) VALUES(?,?)").bind(tournamentId, teamId).run();
+    } else {
+      const match = await env.DB.prepare("SELECT id FROM matches WHERE tournament_id=? AND (team_a_id=? OR team_b_id=?) LIMIT 1").bind(tournamentId, teamId, teamId).first();
+      if (match) return fail("Team cannot be removed after tournament matches exist", 409);
+      await env.DB.prepare("DELETE FROM tournament_teams WHERE tournament_id=? AND team_id=?").bind(tournamentId, teamId).run();
+    }
+    return reply({ success: true, tournamentId, teamId, attached: request.method === "POST" });
+  }
+
   const teamPlayersMatch = path.match(/^\/api\/teams\/([^/]+)\/players$/);
   if (teamPlayersMatch && request.method === "GET") {
     const result = await env.DB.prepare(`SELECT p.*,tp.member_role,tp.is_admin,tp.is_captain,tp.is_wicket_keeper FROM players p JOIN team_players tp ON tp.player_id=p.id WHERE tp.team_id=? AND tp.squad_status='ACTIVE' ORDER BY p.name`).bind(teamPlayersMatch[1]).all();
@@ -900,6 +920,17 @@ async function route(request, env) {
   if (teamPlayerMatch && request.method === "DELETE") {
     if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
     await env.DB.prepare("UPDATE team_players SET squad_status='REMOVED' WHERE team_id=? AND player_id=?").bind(teamPlayerMatch[1], teamPlayerMatch[2]).run();
+    return reply({ success: true });
+  }
+
+  if (teamMatch && request.method === "DELETE") {
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
+    const match = await env.DB.prepare("SELECT id FROM matches WHERE team_a_id=? OR team_b_id=? LIMIT 1").bind(teamMatch[1], teamMatch[1]).first();
+    if (match) return fail("Team cannot be removed because it is used by a match", 409);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM tournament_teams WHERE team_id=?").bind(teamMatch[1]),
+      env.DB.prepare("UPDATE teams SET is_active=0,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(teamMatch[1])
+    ]);
     return reply({ success: true });
   }
 
