@@ -33,6 +33,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -511,13 +513,56 @@ private fun ScoringScreen(api:CloudApi,initial:CricketMatch,canScore:Boolean,onB
     var dismissal by remember{mutableStateOf("BOWLED")};var dismissedId by remember{mutableStateOf("")};var nextBatterId by remember{mutableStateOf("")};var fielderId by remember{mutableStateOf("")};var assistantFielderId by remember{mutableStateOf("")}
     var showPlayerChange by remember{mutableStateOf(false)};var eligiblePlayers by remember{mutableStateOf(emptyList<Player>())};var loadingEligible by remember{mutableStateOf(false)}
     var showBroadcastPin by remember{mutableStateOf(false)};var broadcastGrant by remember{mutableStateOf<BroadcastGrant?>(null)};var broadcastBusy by remember{mutableStateOf(false)}
-    suspend fun snapshot(expected:Int):CricketMatch{val bundle=withContext(Dispatchers.IO){val fresh=api.match(match.id);val current=fresh.innings.lastOrNull();Triple(fresh,if(current!=null)api.deliveries(current.id)else emptyList(),if(current!=null)api.scorecard(current.id)else Scorecard(emptyList(),emptyList()))};if(generation==expected){match=bundle.first;deliveries=bundle.second;scorecard=bundle.third;onUpdated(bundle.first);val current=bundle.first.innings.lastOrNull();val waiting=bundle.first.status=="LIVE"&&current!=null&&current.legalBalls>0&&current.legalBalls%6==0&&bundle.second.firstOrNull()?.bowlerId==current.bowlerId;if(waiting){mustChangeBowler=true;showBowler=true}};return bundle.first}
+    suspend fun snapshot(expected:Int):CricketMatch{val bundle=withContext(Dispatchers.IO){val fresh=api.match(match.id);val current=fresh.innings.lastOrNull();coroutineScope{val deliveriesRequest=async{if(current!=null)api.deliveries(current.id)else emptyList()};val scorecardRequest=async{if(current!=null)api.scorecard(current.id)else Scorecard(emptyList(),emptyList())};Triple(fresh,deliveriesRequest.await(),scorecardRequest.await())}};if(generation==expected){match=bundle.first;deliveries=bundle.second;scorecard=bundle.third;onUpdated(bundle.first);val current=bundle.first.innings.lastOrNull();val waiting=bundle.first.status=="LIVE"&&current!=null&&current.legalBalls>0&&current.legalBalls%6==0&&bundle.second.firstOrNull()?.bowlerId==current.bowlerId;if(waiting){mustChangeBowler=true;showBowler=true}};return bundle.first}
     fun perform(onSuccess:(CricketMatch)->Unit={},action:()->Unit){generation++;val expected=generation;busy=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){action()};snapshot(expected)}.onSuccess{fresh->syncedTick++;onSuccess(fresh)}.onFailure{error=it.message};busy=false}}
-    LaunchedEffect(match.id){lineup=runCatching{withContext(Dispatchers.IO){api.lineup(match.id)}}.getOrDefault(emptyList());while(true){val expected=generation;runCatching{snapshot(expected)}.onFailure{error=it.message};delay(2000)}}
+    LaunchedEffect(match.id){lineup=runCatching{withContext(Dispatchers.IO){api.lineup(match.id)}}.getOrDefault(emptyList());while(true){if(!busy){val expected=generation;runCatching{snapshot(expected)}.onFailure{error=it.message}};delay(8000)}}
     LaunchedEffect(syncedTick){if(syncedTick>0){showSynced=true;delay(1800);showSynced=false}}
     val inn=match.innings.lastOrNull();val battingName=if(inn?.battingTeamId==match.teamAId)match.teamAName else match.teamBName;val oversText=inn?.let{"${it.legalBalls/6}.${it.legalBalls%6}"}?:"0.0";val target=if(match.currentInnings==2)(match.innings.firstOrNull()?.runs?:0)+1 else 0;val locked=busy||match.status=="PAUSED"||mustChangeBowler
     val battingPlayers=if(inn==null)emptyList()else lineup.filter{it.teamId==inn.battingTeamId};val bowlingPlayers=if(inn==null)emptyList()else lineup.filter{it.teamId==inn.bowlingTeamId};val dismissed=deliveries.filter{it.wicket}.map{it.dismissedPlayerId}.toSet()
-    fun recordDelivery(draft:DeliveryDraft){val before=inn?.legalBalls?:0;if(inn!=null)perform(onSuccess={fresh->val current=fresh.innings.lastOrNull();if(fresh.status=="LIVE"&&current!=null&&current.legalBalls>before&&current.legalBalls%6==0){mustChangeBowler=true;showBowler=true}}){api.addDelivery(inn.id,draft)}}
+    fun recordDelivery(draft:DeliveryDraft){
+        val active=inn?:return
+        if(busy)return
+        val previousMatch=match;val previousDeliveries=deliveries;val previousScorecard=scorecard
+        val legal=draft.extraType!="WIDE"&&draft.extraType!="NO_BALL"
+        val pending=Delivery("pending-${System.nanoTime()}",(deliveries.maxOfOrNull{it.sequence}?:0)+1,draft.batterRuns,draft.extraRuns,draft.extraType,draft.isWicket,draft.dismissalType.orEmpty(),draft.dismissedPlayerId.orEmpty(),active.strikerName,active.bowlerId,active.bowlerName,legal)
+        val runningRuns=when(draft.extraType){"BYE","LEG_BYE"->draft.batterRuns+draft.extraRuns;"NO_BALL"->draft.batterRuns+(draft.extraRuns-1).coerceAtLeast(0);else->draft.batterRuns}
+        var nextStrikerId=active.strikerId;var nextNonStrikerId=active.nonStrikerId
+        if(runningRuns%2==1){val swap=nextStrikerId;nextStrikerId=nextNonStrikerId;nextNonStrikerId=swap}
+        if(draft.isWicket&&!draft.nextBatterId.isNullOrBlank()){if(draft.dismissedPlayerId==active.nonStrikerId)nextNonStrikerId=draft.nextBatterId else nextStrikerId=draft.nextBatterId}
+        val nextLegalBalls=active.legalBalls+(if(legal)1 else 0)
+        if(legal&&nextLegalBalls%6==0){val swap=nextStrikerId;nextStrikerId=nextNonStrikerId;nextNonStrikerId=swap}
+        val nextStriker=lineup.find{it.id==nextStrikerId}
+        val nextNonStriker=lineup.find{it.id==nextNonStrikerId}
+        val optimisticInnings=active.copy(runs=active.runs+draft.batterRuns+draft.extraRuns,wickets=active.wickets+(if(draft.isWicket)1 else 0),legalBalls=nextLegalBalls,strikerId=nextStrikerId,nonStrikerId=nextNonStrikerId,strikerName=nextStriker?.name?:if(nextStrikerId==active.strikerId)active.strikerName else active.nonStrikerName,nonStrikerName=nextNonStriker?.name?:if(nextNonStrikerId==active.nonStrikerId)active.nonStrikerName else active.strikerName)
+        match=match.copy(innings=match.innings.dropLast(1)+optimisticInnings)
+        deliveries=listOf(pending)+deliveries
+        fun batterRow(id:String,name:String)=scorecard.batters.find{it.id==id}?:BatterStat(id,name,0,0,0,0,"")
+        val batters=scorecard.batters.toMutableList().apply{
+            if(none{it.id==active.strikerId})add(batterRow(active.strikerId,active.strikerName))
+            if(none{it.id==active.nonStrikerId})add(batterRow(active.nonStrikerId,active.nonStrikerName))
+        }.map{row->
+            var next=row
+            if(row.id==active.strikerId)next=next.copy(runs=next.runs+draft.batterRuns,balls=next.balls+(if(legal)1 else 0),fours=next.fours+(if(draft.batterRuns==4)1 else 0),sixes=next.sixes+(if(draft.batterRuns==6)1 else 0))
+            if(draft.isWicket&&row.id==(draft.dismissedPlayerId?:active.strikerId))next=next.copy(dismissal=draft.dismissalType.orEmpty())
+            next
+        }
+        val conceded=draft.batterRuns+(if(draft.extraType=="WIDE"||draft.extraType=="NO_BALL")draft.extraRuns else 0)
+        val creditedWicket=draft.isWicket&&draft.dismissalType !in listOf("RUN_OUT","RETIRED_HURT","OBSTRUCTING_FIELD")
+        val bowlers=scorecard.bowlers.toMutableList().apply{if(none{it.id==active.bowlerId})add(BowlerStat(active.bowlerId,active.bowlerName,0,0,0))}.map{row->if(row.id==active.bowlerId)row.copy(legalBalls=row.legalBalls+(if(legal)1 else 0),runs=row.runs+conceded,wickets=row.wickets+(if(creditedWicket)1 else 0))else row}
+        scorecard=Scorecard(batters,bowlers)
+        generation++;val expected=generation;busy=true;error=null
+        scope.launch{
+            runCatching{withContext(Dispatchers.IO){api.addDelivery(active.id,draft)}}
+                .onSuccess{update->if(generation==expected){
+                    val confirmedMatch=update.match?:match
+                    val confirmedDelivery=(update.delivery?:pending.copy(id=update.deliveryId.ifBlank{pending.id})).copy(strikerName=active.strikerName,bowlerName=active.bowlerName)
+                    match=confirmedMatch;deliveries=listOf(confirmedDelivery)+previousDeliveries;onUpdated(confirmedMatch);syncedTick++
+                    val current=confirmedMatch.innings.lastOrNull();if(confirmedMatch.status=="LIVE"&&current!=null&&current.legalBalls>0&&current.legalBalls%6==0){mustChangeBowler=true;showBowler=true}
+                }}
+                .onFailure{match=previousMatch;deliveries=previousDeliveries;scorecard=previousScorecard;error=it.message}
+            busy=false
+        }
+    }
     val currentOverBalls=remember(deliveries){val chronological=deliveries.sortedBy{it.sequence};val afterLastBoundary=chronological.fold(emptyList<Delivery>() to 0){acc,ball->val next=acc.first+ball;val legal=acc.second+(if(ball.legal)1 else 0);if(legal==6)emptyList<Delivery>() to 0 else next to legal};afterLastBoundary.first}
     val canReplaceStriker=inn!=null&&inn.legalBalls%6==0&&currentOverBalls.isEmpty()&&!mustChangeBowler
     fun openPlayerChange(){loadingEligible=true;error=null;scope.launch{runCatching{withContext(Dispatchers.IO){api.eligiblePlayers(match.id)}}.onSuccess{eligiblePlayers=it;showPlayerChange=true}.onFailure{error=it.message};loadingEligible=false}}

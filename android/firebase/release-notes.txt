@@ -1,4 +1,10 @@
-SportSync Cricket - version 0.28.1 testing beta.
+SportSync Cricket - version 0.29.0 testing beta.
+
+- Score buttons now update the screen immediately instead of waiting for several server reads
+- Each ball uses one scoring request; background reconciliation now runs every eight seconds
+- Match details, deliveries and scorecard refresh concurrently to reduce waiting time
+- Automatically rolls back the optimistic score if the server rejects a delivery
+- Remains compatible with the currently deployed scoring API during the backend rollout
 
 - Fixed the second-innings chase card remaining transparent in the OpenGL preview and YouTube output
 - Chase information now remains visibly rendered for four seconds after every delivery

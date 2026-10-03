@@ -733,7 +733,29 @@ async function route(request, env) {
         env.DB.prepare("UPDATE matches SET status='INNINGS_BREAK',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(match.id)
       ]);
     }
-    return reply({ success: true, deliveryId: id, totals, strikerId: striker, nonStrikerId: nonStriker }, 201);
+    const freshMatch = await matchView(env, match.id);
+    return reply({
+      success: true,
+      deliveryId: id,
+      totals,
+      strikerId: striker,
+      nonStrikerId: nonStriker,
+      match: freshMatch,
+      delivery: {
+        id,
+        sequence_number: Number(seq.next),
+        striker_id: innings.striker_id,
+        non_striker_id: innings.non_striker_id,
+        bowler_id: innings.bowler_id,
+        batter_runs: batterRuns,
+        extra_runs: extraRuns,
+        extra_type: extraType,
+        is_wicket: input.isWicket ? 1 : 0,
+        dismissal_type: input.dismissalType || null,
+        dismissed_player_id: input.dismissedPlayerId || null,
+        is_legal: legal ? 1 : 0
+      }
+    }, 201);
   }
 
   const scorecardMatch = path.match(/^\/api\/innings\/([^/]+)\/scorecard$/);

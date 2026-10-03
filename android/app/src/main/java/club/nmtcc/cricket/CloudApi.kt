@@ -16,6 +16,7 @@ data class Innings(val id: String, val number: Int, val battingTeamId: String, v
 data class MatchDraft(val tournamentId: String, val roundName: String, val teamAId: String, val teamBId: String, val scheduledAt: String, val ground: String, val overs: Int)
 data class DeliveryDraft(val batterRuns: Int = 0, val extraRuns: Int = 0, val extraType: String = "NONE", val isWicket: Boolean = false, val dismissalType: String? = null, val dismissedPlayerId: String? = null, val nextBatterId: String? = null, val fielderId:String?=null, val assistantFielderId:String?=null)
 data class Delivery(val id:String,val sequence:Int,val batterRuns:Int,val extraRuns:Int,val extraType:String,val wicket:Boolean,val dismissalType:String,val dismissedPlayerId:String,val strikerName:String,val bowlerId:String,val bowlerName:String,val legal:Boolean=true,val fielderName:String="",val assistantFielderName:String="")
+data class DeliveryUpdate(val match:CricketMatch?,val delivery:Delivery?,val deliveryId:String,val strikerId:String,val nonStrikerId:String)
 data class BatterStat(val id:String,val name:String,val runs:Int,val balls:Int,val fours:Int,val sixes:Int,val dismissal:String,val fielderName:String="",val assistantFielderName:String="",val dismissalBowlerName:String="")
 data class BowlerStat(val id:String,val name:String,val legalBalls:Int,val runs:Int,val wickets:Int,val maidens:Int=0)
 data class Scorecard(val batters:List<BatterStat>,val bowlers:List<BowlerStat>)
@@ -117,7 +118,18 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     }
     fun recordToss(matchId: String, winnerId: String, decision: String, strikerId: String, nonStrikerId: String, bowlerId: String): CricketMatch = JSONObject(request("/api/matches/$matchId/toss", "PUT", JSONObject().put("tossWinnerId",winnerId).put("decision",decision).put("strikerId",strikerId).put("nonStrikerId",nonStrikerId).put("bowlerId",bowlerId))).toMatch()
     fun updateParticipants(inningsId: String, strikerId: String? = null, nonStrikerId: String? = null, bowlerId: String? = null) { request("/api/innings/$inningsId/participants", "PUT", JSONObject().putOpt("strikerId",strikerId).putOpt("nonStrikerId",nonStrikerId).putOpt("bowlerId",bowlerId)) }
-    fun addDelivery(inningsId: String, draft: DeliveryDraft) { request("/api/innings/$inningsId/deliveries", "POST", JSONObject().put("batterRuns",draft.batterRuns).put("extraRuns",draft.extraRuns).put("extraType",draft.extraType).put("isWicket",draft.isWicket).putOpt("dismissalType",draft.dismissalType).putOpt("dismissedPlayerId",draft.dismissedPlayerId).putOpt("nextBatterId",draft.nextBatterId).putOpt("fielderId",draft.fielderId).putOpt("assistantFielderId",draft.assistantFielderId)) }
+    fun addDelivery(inningsId: String, draft: DeliveryDraft): DeliveryUpdate {
+        val json = JSONObject(request("/api/innings/$inningsId/deliveries", "POST", JSONObject().put("batterRuns",draft.batterRuns).put("extraRuns",draft.extraRuns).put("extraType",draft.extraType).put("isWicket",draft.isWicket).putOpt("dismissalType",draft.dismissalType).putOpt("dismissedPlayerId",draft.dismissedPlayerId).putOpt("nextBatterId",draft.nextBatterId).putOpt("fielderId",draft.fielderId).putOpt("assistantFielderId",draft.assistantFielderId)))
+        val deliveryJson = json.optJSONObject("delivery")
+        return DeliveryUpdate(
+            match = json.optJSONObject("match")?.toMatch(),
+            delivery = deliveryJson?.let { Delivery(
+                id=it.string("id"),sequence=it.optInt("sequence_number"),batterRuns=it.optInt("batter_runs"),extraRuns=it.optInt("extra_runs"),extraType=it.string("extra_type"),wicket=it.optInt("is_wicket")==1,dismissalType=it.string("dismissal_type"),dismissedPlayerId=it.string("dismissed_player_id"),strikerName="",bowlerId=it.string("bowler_id"),bowlerName="",legal=it.optInt("is_legal",1)==1
+            ) },
+            deliveryId=json.string("deliveryId").ifBlank { deliveryJson?.string("id").orEmpty() },
+            strikerId=json.string("strikerId"),nonStrikerId=json.string("nonStrikerId")
+        )
+    }
     fun undoDelivery(inningsId: String) { request("/api/innings/$inningsId/undo", "POST", JSONObject()) }
     fun deliveries(inningsId:String):List<Delivery> = JSONArray(request("/api/innings/$inningsId/deliveries")).objects().map{it.toDelivery()}
     fun scorecard(inningsId:String):Scorecard { val json=JSONObject(request("/api/innings/$inningsId/scorecard"));return Scorecard(json.optJSONArray("batters")?.objects()?.map{it.toBatterStat()}?:emptyList(),json.optJSONArray("bowlers")?.objects()?.map{it.toBowlerStat()}?:emptyList()) }
