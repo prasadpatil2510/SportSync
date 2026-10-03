@@ -106,6 +106,8 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     fun addPlayerToTeam(teamId: String, playerId: String) { request("/api/teams/$teamId/players/$playerId", "PUT", JSONObject()) }
     fun removePlayerFromTeam(teamId: String, playerId: String) { request("/api/teams/$teamId/players/$playerId", "DELETE", JSONObject()) }
     fun tournamentMatches(tournamentId: String): List<CricketMatch> = JSONArray(request("/api/tournaments/$tournamentId/matches")).objects().map { it.toMatch() }
+    fun deleteTournament(tournamentId:String) { request("/api/tournaments/$tournamentId","DELETE",JSONObject()) }
+    fun deleteMatch(matchId:String) { request("/api/matches/$matchId","DELETE",JSONObject()) }
     fun pointsTable(tournamentId:String):List<PointRow> = JSONArray(request("/api/tournaments/$tournamentId/points-table")).objects().map { PointRow(it.string("teamId"),it.string("teamName"),it.optString("logoUrl").takeIf(String::isNotBlank),it.optInt("played"),it.optInt("won"),it.optInt("lost"),it.optInt("tied"),it.optInt("noResult"),it.optInt("points"),it.optDouble("nrr")) }
     fun scheduleMatches(draft:ScheduleDraft):ScheduleResult { val value=JSONObject(request("/api/tournaments/${draft.tournamentId}/schedule","POST",JSONObject().put("format",draft.format).put("teamIds",JSONArray(draft.teamIds.toList())).put("startDateTime",draft.startDateTime).put("intervalMinutes",draft.intervalMinutes).put("ground",draft.ground).put("oversPerInnings",draft.overs)));return ScheduleResult(value.optInt("matchesCreated"),value.optInt("rounds")) }
     fun match(matchId: String): CricketMatch = JSONObject(request("/api/matches/$matchId")).toMatch()
@@ -135,6 +137,9 @@ class CloudApi(private val baseUrl: String = BuildConfig.API_BASE_URL, private v
     fun scorecard(inningsId:String):Scorecard { val json=JSONObject(request("/api/innings/$inningsId/scorecard"));return Scorecard(json.optJSONArray("batters")?.objects()?.map{it.toBatterStat()}?:emptyList(),json.optJSONArray("bowlers")?.objects()?.map{it.toBowlerStat()}?:emptyList()) }
     fun endInnings(matchId: String, strikerId: String? = null, nonStrikerId: String? = null, bowlerId: String? = null): CricketMatch = JSONObject(request("/api/matches/$matchId/end-innings", "POST", JSONObject().putOpt("strikerId",strikerId).putOpt("nonStrikerId",nonStrikerId).putOpt("bowlerId",bowlerId))).toMatch()
     fun setMatchStatus(matchId: String, status: String): CricketMatch = JSONObject(request("/api/matches/$matchId/status", "PUT", JSONObject().put("status",status))).toMatch()
+    fun updateMatchOvers(matchId:String,overs:Int):CricketMatch = JSONObject(request("/api/matches/$matchId/overs","PUT",JSONObject().put("overs",overs))).toMatch()
+    fun addScoreAdjustment(inningsId:String,runs:Int,reason:String):CricketMatch = JSONObject(request("/api/innings/$inningsId/adjustment","POST",JSONObject().put("runs",runs).put("reason",reason))).toMatch()
+    fun forceEndMatch(matchId:String):CricketMatch = JSONObject(request("/api/matches/$matchId/force-end","POST",JSONObject())).toMatch()
 }
 
 private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }

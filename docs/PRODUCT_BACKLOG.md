@@ -1,6 +1,6 @@
 # SportSync product backlog
 
-Last reviewed: 2026-09-23
+Last reviewed: 2026-10-03
 
 This is the product-level view. Detailed behavior and verification live in `specs/registry.json` and the linked specifications.
 
@@ -25,6 +25,10 @@ This is the product-level view. Detailed behavior and verification live in `spec
 - Physical-device validation for direct YouTube and remote OBS broadcasting — LIVE-016
 - Idempotency keys and match revisions for every scoring command before production
 - Production API/domain, database, authentication recovery and operational monitoring
+- Configurable wide, no-ball and wicket-on-wide match rules
+- Formal DLS/VJD target revision with calculation audit trail
+- Retired-hurt batter workflow that does not count as a wicket
+- Match scorer, official and streamer assignment with permissions
 
 ## Better to have
 

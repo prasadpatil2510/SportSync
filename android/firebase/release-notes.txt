@@ -1,4 +1,12 @@
-SportSync Cricket - version 0.29.0 testing beta.
+SportSync Cricket - version 0.30.0 testing beta.
+
+- Added a top-right match settings menu on the scoring screen
+- Added match-over editing, bonus runs, penalty runs, end innings and force-end match controls
+- Added playing-squad and bowler controls to the settings menu
+- Striker and non-striker can now both be replaced at any time
+- Added confirmed deletion for tournaments and individual matches
+- Start Match and Add Schedule remain available after fixtures already exist
+- Marked rules, DLS/VJD, retired hurt and officials/scorer assignment as next-phase work
 
 - Score buttons now update the screen immediately instead of waiting for several server reads
 - Each ball uses one scoring request; background reconciliation now runs every eight seconds

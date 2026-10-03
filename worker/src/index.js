@@ -428,6 +428,14 @@ async function route(request, env) {
   }
 
   if (path === "/api/tournaments" && request.method === "GET") return reply(await list(env, "tournaments"));
+  const tournamentDeleteMatch = path.match(/^\/api\/tournaments\/([^/]+)$/);
+  if (tournamentDeleteMatch && request.method === "DELETE") {
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
+    const tournament = await env.DB.prepare("SELECT id FROM tournaments WHERE id=?").bind(tournamentDeleteMatch[1]).first();
+    if (!tournament) return fail("Tournament not found",404);
+    await env.DB.prepare("DELETE FROM tournaments WHERE id=?").bind(tournament.id).run();
+    return reply({success:true});
+  }
   if (path === "/api/teams" && request.method === "GET") {
     const result = await env.DB.prepare("SELECT * FROM teams WHERE is_active=1 ORDER BY name").all();
     return reply(result.results);
@@ -503,8 +511,6 @@ async function route(request, env) {
     const teamIds = Array.isArray(input.teamIds) ? [...new Set(input.teamIds.map(clean).filter(Boolean))] : [];
     if (teamIds.length < 2) return fail("Select at least two teams");
     if (!validDateTime(input.startDateTime)) return fail("Select a valid first match date and time");
-    const existing = await env.DB.prepare("SELECT COUNT(*) count FROM matches WHERE tournament_id=?").bind(tournamentId).first();
-    if (Number(existing.count)) return fail("This tournament already has matches. Add further matches manually");
     const allowed = await env.DB.prepare(`SELECT team_id FROM tournament_teams WHERE tournament_id=?`).bind(tournamentId).all();
     const allowedIds = new Set(allowed.results.map(row => row.team_id));
     if (teamIds.some(id => !allowedIds.has(id))) return fail("One or more selected teams are not in this tournament");
@@ -554,9 +560,39 @@ async function route(request, env) {
   }
 
   const matchMatch = path.match(/^\/api\/matches\/([^/]+)$/);
+  if (matchMatch && request.method === "DELETE") {
+    if (!await requireRoles(request, env, [ROLES.TOURNAMENT_ADMIN])) return fail("Tournament Admin access required", 403);
+    const match = await env.DB.prepare("SELECT id FROM matches WHERE id=?").bind(matchMatch[1]).first();
+    if (!match) return fail("Match not found",404);
+    await env.DB.prepare("DELETE FROM matches WHERE id=?").bind(match.id).run();
+    return reply({success:true});
+  }
   if (matchMatch && request.method === "GET") {
     const value = await matchView(env, matchMatch[1]);
     return value ? reply(value) : fail("Match not found", 404);
+  }
+
+  const matchOversMatch = path.match(/^\/api\/matches\/([^/]+)\/overs$/);
+  if (matchOversMatch && request.method === "PUT") {
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required",403);
+    const input = await body(request);
+    const overs = Math.max(1,Math.min(100,Number(input.overs)||0));
+    const used = await env.DB.prepare("SELECT COALESCE(MAX(legal_balls),0) legal_balls FROM innings WHERE match_id=?").bind(matchOversMatch[1]).first();
+    if (Number(used.legal_balls)>overs*6) return fail("New over limit cannot be below the balls already bowled");
+    await env.DB.prepare("UPDATE matches SET overs_per_innings=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(overs,matchOversMatch[1]).run();
+    const value=await matchView(env,matchOversMatch[1]);
+    return value?reply(value):fail("Match not found",404);
+  }
+
+  const forceEndMatch = path.match(/^\/api\/matches\/([^/]+)\/force-end$/);
+  if (forceEndMatch && request.method === "POST") {
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required",403);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE innings SET status='COMPLETE',updated_at=CURRENT_TIMESTAMP WHERE match_id=? AND status='LIVE'").bind(forceEndMatch[1]),
+      env.DB.prepare("UPDATE matches SET status='COMPLETE',result_text='Match ended by scorer',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(forceEndMatch[1])
+    ]);
+    const value=await matchView(env,forceEndMatch[1]);
+    return value?reply(value):fail("Match not found",404);
   }
 
   const matchStatusMatch = path.match(/^\/api\/matches\/([^/]+)\/status$/);
@@ -787,6 +823,21 @@ async function route(request, env) {
       SELECT p.id,p.name,f.legal_balls,f.runs,f.wickets,COALESCE(m.maidens,0) maidens
       FROM figures f JOIN players p ON p.id=f.bowler_id LEFT JOIN maidens m ON m.bowler_id=f.bowler_id ORDER BY p.name`).bind(scorecardMatch[1]).all();
     return reply({ batters: batters.results, bowlers: bowlers.results });
+  }
+
+  const adjustmentMatch = path.match(/^\/api\/innings\/([^/]+)\/adjustment$/);
+  if (adjustmentMatch && request.method === "POST") {
+    if (!await requireRoles(request, env, [ROLES.SCORER, ROLES.TOURNAMENT_ADMIN])) return fail("Scorer access required",403);
+    const input=await body(request);
+    const runs=Math.max(1,Math.min(100,Number(input.runs)||0));
+    const reason=clean(input.reason).toUpperCase()==="PENALTY"?"PENALTY":"BONUS";
+    const innings=await env.DB.prepare("SELECT * FROM innings WHERE id=? AND status='LIVE'").bind(adjustmentMatch[1]).first();
+    if(!innings)return fail("Live innings not found",404);
+    const seq=await env.DB.prepare("SELECT COALESCE(MAX(sequence_number),0)+1 next FROM deliveries WHERE innings_id=?").bind(innings.id).first();
+    await env.DB.prepare(`INSERT INTO deliveries(id,innings_id,sequence_number,striker_id,non_striker_id,bowler_id,batter_runs,extra_runs,extra_type,is_wicket,is_legal,note)
+      VALUES(?,?,?,?,?,?,0,?,?,0,0,?)`).bind(makeId("adjustment"),innings.id,seq.next,innings.striker_id,innings.non_striker_id,innings.bowler_id,runs,reason,`${reason} RUNS`).run();
+    await recalculateInnings(env,innings.id);
+    return reply(await matchView(env,innings.match_id));
   }
 
   const undoMatch = path.match(/^\/api\/innings\/([^/]+)\/undo$/);
